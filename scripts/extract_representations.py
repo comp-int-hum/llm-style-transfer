@@ -32,20 +32,29 @@ def frequency_based_list(fnames, lowercase, number_of_words):
             unique_titles.add(title)
             total_document_count += len(text["subdocuments"])
             for subdocument in text["subdocuments"]:
-                subdocument = [w.lower() for w in subdocument] if lowercase else subdocument
-                for word in set(subdocument):
+                tokenized_subdoc = word_tokenize(subdocument)
+                tokens = [w.lower() for w in tokenized_subdoc] if lowercase else tokenized_subdoc
+                for word in set(tokens):
                     document_frequencies[word] = document_frequencies.get(word, 0) + 1
                     author_frequencies[word] = author_frequencies.get(word, set())
                     author_frequencies[word].add(author)
                     title_frequencies[word] = title_frequencies.get(word, set())
                     title_frequencies[word].add(title)
+                # Use below commented code if use old divide_document.py (which tokenizes all the words)
+                # subdocument = [w.lower() for w in subdocument] if lowercase else subdocument
+                # for word in set(subdocument):
+                    # document_frequencies[word] = document_frequencies.get(word, 0) + 1
+                    # author_frequencies[word] = author_frequencies.get(word, set())
+                    # author_frequencies[word].add(author)
+                    # title_frequencies[word] = title_frequencies.get(word, set())
+                    # title_frequencies[word].add(title)
     scored_words = []
     for word, document_count in document_frequencies.items():
         scored_words.append((document_count / total_document_count, word))
     top_words = sorted(scored_words, reverse=True)[0:number_of_words]
     return [w for _, w in top_words]
 
-word_list = stopwords.words("english") if args.feature_selection_method == "stopwords" else frequency_based_list(args.subdocuments, args.lowercase, args.num_features_to_keep)
+# word_list = stopwords.words("english") if args.feature_selection_method == "stopwords" else frequency_based_list(args.subdocuments, args.lowercase, args.num_features_to_keep)
 
 #####
 def character_freqs(tokens): #, number_of_features):
@@ -60,68 +69,73 @@ def character_freqs(tokens): #, number_of_features):
     return special_char_freqs, punct_freqs 
 
 def postag_freqs(tokens):
-    postag_dict = {}
+    pos_categories = ['Det','Poss','Pron','Adv','Wh','CC','CD','EX','FW','IN','Adj','LS','MD','Noun','RP','SYM','TO','UH','Verb']
+    postag_list = [0] * 19
+    word_properties = ['long words','short words','all caps','uppercase']
+    wordprop_list = [0] * 4
     for (word, tag) in pos_tag(tokens):
-
         # TODO: add punct tags?
         #if word == '-' and tag == ':':
         #    eos_hypen += 1
 
         # some overlap possible in these tag categories
         if tag in ['DT', 'PDT', 'WDT']:
-            postag_dict['Det'] += 1
+            postag_list[0] += 1
         if tag in ['POS', 'PRP$', 'WP$']:
-            postag_dict['Poss'] += 1
+            postag_list[1] += 1
         if tag in ['PRP', 'PRP$', 'WP', 'WP$']:
-            postag_dict['Pron'] += 1
+            postag_list[2] += 1
         if tag in ['RB', 'RBR', 'RBS', 'WRB']:
-            postag_dict['RB*'] += 1
+            postag_list[3] += 1
         if tag in ['WDT', 'WP', 'WP$', 'WRB']:
-            postag_dict['Wh*'] += 1
+            postag_list[4] += 1
 
         # no tag category overlap
         elif tag in ['CC']:
-            postag_dict['CC'] += 1
+            postag_list[5] += 1
         elif tag in ['CD']:
-            postag_dict['CD'] += 1
+            postag_list[6] += 1
         elif tag in ['EX']:
-            postag_dict['EX'] += 1
+            postag_list[7] += 1
         elif tag in ['FW']:
-            postag_dict['FW'] += 1
+            postag_list[8] += 1
         elif tag in ['IN']:
-            postag_dict['IN'] += 1
+            postag_list[9] += 1
         elif tag.startswith('J'):
-            postag_dict['JJ*'] += 1
+            postag_list[10] += 1
         elif tag in ['LS']:
-            postag_dict['LS'] += 1
+            postag_list[11] += 1
         elif tag in ['MD']:
-            postag_dict['MD'] += 1
+            postag_list[12] += 1
         elif tag.startswith('N'):
-            postag_dict['NN*'] += 1
+            postag_list[13] += 1
         elif tag in ['RP']:
-            postag_dict['RP'] += 1
+            postag_list[14] += 1
         elif tag in ['SYM']:
-            postag_dict['SYM'] += 1
+            postag_list[15] += 1
         elif tag in ['TO']:
-            postag_dict['TO'] += 1
+            postag_list[16] += 1
         elif tag in ['UH']:
-            postag_dict['UH'] += 1
+            postag_list[17] += 1
         elif tag.startswith('V'):
-            postag_dict['VB*'] += 1
-        
-        if len(word) >= 8:
-            postag_dict['long words'] += 1
-        elif len(word) in [2, 3, 4]:
-            postag_dict['short words'] += 1
-        if word.isupper():
-            postag_dict['all caps'] += 1
-        elif word[0].isupper():
-            postag_dict['uppercase'] += 1
+            postag_list[18] += 1
     
-    return postag_dict
+        if len(word) >= 8: #arbitrary
+            wordprop_list[0] += 1
+        elif len(word) in [2, 3, 4]:
+            wordprop_list[1] += 1
+        if word.isupper():
+            wordprop_list[2] += 1
+        elif word[0].isupper():
+            wordprop_list[3] += 1
+    
+    postag_dict = dict(zip(pos_categories, postag_list))
+    wordprop_dict = dict(zip(word_properties, wordprop_list))
+    return postag_dict, wordprop_dict
 
-#def comparison_lists():
-    #return
+# def comparison_lists():
+    
+#     return
 
 def readability_features(subdoc):
     textstat_scores = [textstat.flesch_reading_ease(subdoc),
@@ -149,24 +163,26 @@ for fname in args.subdocuments:
                 "representation" : {},
                 "features" : {}
             }
+            
             tokenized_subdoc = word_tokenize(subdocument)
-            spec_char_dict, punct_dict = character_freqs(tokenized_subdoc) 
-
+            
+            # Subdocument (list of strings) features
             item["features"]["readability"] = readability_features(subdocument) 
-            item["features"]["special charss"] = spec_char_dict
-            item["features"]["punctuation"] = punct_dict
-            item["features"]["POS"] = postag_freqs(tokenized_subdoc)
 
-            for word in subdocument:
-                word = word.lower() if args.lowercase else word
+            # Tokenized doc (list of tokens) features
+            spec_char_dict, punct_dict = character_freqs(tokenized_subdoc) 
+            item["features"]["special chars"] = spec_char_dict
+            item["features"]["punctuation"] = punct_dict
+            pos_dict, word_prop_dict = postag_freqs(tokenized_subdoc)
+            item["features"]["POS"] = pos_dict
+            item["features"]["word properties"] = word_prop_dict
+
+            # for word in tokenized_subdoc:
+            #     word = word.lower() if args.lowercase else word
                 
-                item["representation"][word] = item["representation"].get(word, 0) + 1
-            item["representation"] = {k : v / len(subdocument) for k, v in item["representation"].items() if v >= args.minimum_count and k in word_list}
-            
-            
-            
+            #     item["representation"][word] = item["representation"].get(word, 0) + 1
+            # item["representation"] = {k : v / len(subdocument) for k, v in item["representation"].items() if v >= args.minimum_count and k in word_list}
             items.append(item)
             
-        
 with open(args.representations, "wt") as ofd:
     ofd.write(json.dumps(items, indent=4))
