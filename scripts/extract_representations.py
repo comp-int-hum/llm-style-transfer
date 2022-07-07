@@ -3,7 +3,7 @@ import json
 from nltk.corpus import stopwords
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--subdocuments", dest="subdocuments", nargs="+")
+parser.add_argument("--subdocuments", dest="subdocuments")
 parser.add_argument("--representations", dest="representations")
 parser.add_argument("--lowercase", dest="lowercase", default=False, action="store_true")
 parser.add_argument("--minimum_count", dest="minimum_count", default=1)
@@ -21,12 +21,13 @@ def frequency_based_list(fnames, lowercase, number_of_words):
     for fname in fnames:
         with open(fname, "rt") as ifd:
             text = json.loads(ifd.read())
-            author = text["author"]
-            title = text["title"]
+            author = text["author_id"]
+            title = text["subreddit"]
             unique_authors.add(author)
             unique_titles.add(title)
-            total_document_count += len(text["subdocuments"])
-            for subdocument in text["subdocuments"]:
+            total_document_count += len(text["texts"])
+
+            for subdocument in text["texts"]:
                 subdocument = [w.lower() for w in subdocument] if lowercase else subdocument
                 for word in set(subdocument):
                     document_frequencies[word] = document_frequencies.get(word, 0) + 1
@@ -43,20 +44,20 @@ def frequency_based_list(fnames, lowercase, number_of_words):
 word_list = stopwords.words("english") if args.feature_selection_method == "stopwords" else frequency_based_list(args.subdocuments, args.lowercase, args.num_features_to_keep)
 
 items = []
-for fname in args.subdocuments:
-    with open(fname, "rt") as ifd:
-        text = json.loads(ifd.read())
-        author = text["author"]
-        title = text["title"]
-        for subdocument in text["subdocuments"]:
+# rather than each doc being specific to an author, it's a list of all of them
+with open(args.subdocuments, "rt") as ifd:
+    examples = json.loads(ifd.read())
+    for text in examples:
+        author = text["author_id"]
+        title = text["subreddit"]
+        for idx, subdocument in enumerate(text["texts"]):
             item = {
                 "author" : author,
-                "title" : title,
+                "title" : title[idx],
                 "representation" : {},
             }
             for word in subdocument:
                 word = word.lower() if args.lowercase else word
-                
                 item["representation"][word] = item["representation"].get(word, 0) + 1
             item["representation"] = {k : v / len(subdocument) for k, v in item["representation"].items() if v >= args.minimum_count and k in word_list}
             items.append(item)
