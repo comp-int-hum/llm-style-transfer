@@ -10,24 +10,19 @@ import seaborn
 import matplotlib.pyplot as plt
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--summary", dest="summary")
-parser.add_argument("--author_index", dest="author_index", default='author2idx.json')
-parser.add_argument("--eval_method", choices=["heat map", "accuracy"], default="heat map")
-# parser.add_argument("--predictions", dest="predictions", default="predictions.json")
+parser.add_argument("--summary", dest="summary", default='summary')
+parser.add_argument("--labels_index", dest="labels_index", default='author2idx.json')
+parser.add_argument("--eval_method", dest="eval_method", nargs="+",choices=["heat map", "f1"], default="heat map")
 args, rest = parser.parse_known_args()
 
 seaborn.set_theme(style="whitegrid")
 
-# load predictions 
-# with open(args.predictions, "rt") as ifd:
-#     predictions = json.loads(ifd.read())
-
 # load lookup tables
-with open(args.author_index, 'rt') as ifd:
-    author_to_index = json.loads(ifd.read())
+with open(args.labels_index, 'rt') as ifd:
+    labels_to_index = json.loads(ifd.read())
 
 # make inverse lookup
-index_to_author = {i : k for k, i in author_to_index.items()}
+index_to_labels = {i : k for k, i in labels_to_index.items()}
 
 results = []
 
@@ -41,24 +36,36 @@ for i in range(int(len(rest) / 2)):
         configuration["actual"] = preds["actual"]
     results.append(configuration)
 
-
-
 df = pd.DataFrame(results)
 
 # HACK making fake data so I can check the plotting
 df.loc[len(df.index)] = ['20', 'True', '200', 'stopwords', '5', '2', 0.978, preds['preds'], preds['actual']]
-print(df.head())
-fields = [
-    f for f in [
-        "CLUSTER_COUNT",
-        "WORDS_PER_SUBDOCUMENT",
-        "NUM_FEATURES_TO_KEEP",
-        "LOWERCASE",
-        "FEATURE_SELECTION_METHOD"
-    ] if df[f].nunique() > 1
-]
 
-if args.eval_method == "accuracy":
+if "heat map" in args.eval_method:
+    # print(df.head())
+    for index, row in df.iterrows():
+        plt.figure()
+        cm = row[["actual", "preds"]]
+        confusion_matrix = pd.crosstab(cm["actual"], cm["preds"], rownames=['Actual'], colnames=['Predictions'])
+        seaborn.heatmap(confusion_matrix, annot=True)
+        plt.show()
+        plt.savefig(f'{args.eval_method}_{args.summary}_{index}.png')
+
+elif "table" in args.eval_method:
+    # NOTE: we want the accuracy method to spit out a tabular format of all 
+    pass
+elif "f1" in args.eval_method:
+    
+    fields = [
+        f for f in [
+            "CLUSTER_COUNT",
+            "WORDS_PER_SUBDOCUMENT",
+            "NUM_FEATURES_TO_KEEP",
+            "LOWERCASE",
+            "FEATURE_SELECTION_METHOD"
+        ] if df[f].nunique() > 1
+    ]
+
     fig, axs = plt.subplots(len(fields), 1, figsize=(15, 5 * len(fields)))
 
     for i, field in enumerate(fields):
@@ -74,23 +81,10 @@ if args.eval_method == "accuracy":
         df["CLUSTER_COUNT"] = df["CLUSTER_COUNT"].astype(int)
         # df["LOWERCASE"] = df["LOWERCASE"].astype(bool)
         
-        
+
         sp = seaborn.pointplot(x=field, y="accuracy", data=df, order=order, ax=axs[i]).set_ylabel("Accuracy")
-elif args.eval_method == "heat map":
-    fig, axs = plt.subplots(len(fields), 1, figsize=(15, 5 * len(fields)))
-        pass
-        
-        # cm = df[['preds','actual']]
-        # print(cm.shape)
-        # print(cm.dtypes)
 
-        # print(type(cm[0]), cm[1].shape)
-        # make a confusion matrix of the predictions, then plot
-        # have to incorporate field somehow
-        # sp = seaborn.heatmap(cm)
 
-        
-    
 
-# fig.tight_layout()
-# fig.savefig(f'{args.eval_method}_{args.summary}.png')
+    fig.tight_layout()
+    fig.savefig(f'{args.eval_method}_{args.summary}.png')
