@@ -15,54 +15,71 @@ parser.add_argument("--representations", dest="representations")
 parser.add_argument("--random_seed", dest="random_seed", type=int)
 parser.add_argument("--classifier", dest="classifer", choices=["Nearest Neighbors","Linear SVM","RBF SVM","Gaussian Process","Decision Tree","Random Forest","Neural Net","AdaBoost","Naive Bayes","QDA"], default="Naive Bayes")
 parser.add_argument("--model", dest="model", default='model')
-parser.add_argument("--author_index", dest="author_index", default='author2idx')
-parser.add_argument("--ft_index", dest="ft_index", default='ft2idx')
+parser.add_argument("--features", dest="feats", nargs="+", help="the feature set(s) to use in the representation")
+parser.add_argument("--labels", dest="labels", help="the field to use as training labels")
 args = parser.parse_args()
 
 
 with open(args.representations, "rt") as ifd:
     representations = json.loads(ifd.read())
 
-features = set()
-authors = set()
+features = {}
+labels = set()
+
 for item in representations:
-    authors.add(item["author"])
-    for k in item["representation"].keys(): # the words
-        features.add(k)
+    labels.add(item[args.labels])
+    for k,v in item["representation"].items(): # the feature sets
+        if k in args.feats:
+            if k not in features.keys():
+                features[k] = set()
+            for l in item["representation"][k].keys():
+                features[k].add(l)
+
+labels_to_index = {k : i for i, k in enumerate(labels)}
+index_to_labels = {i : k for k, i in labels_to_index.items()}
+
+# save labels lookup
+with open(f'{args.label}_lookup.json', 'wt') as f:
+    f.write(json.dumps(labels_to_index, indent=4))
+
+# get the labels
+labels_vector = []
+for item in representations:
+    labels_vector.append(labels_to_index[item[args.labels]])
+
+# would it make sense to do this feature_to_index thing as many times as types of features and then add the
+# arrays together at the end? that way we can still do the indexing in the smart way.
+output_vector = []
+
+for feat_type in args.feats:
+    feature_to_index = {k : i for i, k in enumerate(features[feat_type])}
+    index_to_feature = {i : k for k, i in feature_to_index.items()}
+    data = np.zeros(shape=(len(representations), len(features[feat_type])))
     
-feature_to_index = {k : i for i, k in enumerate(features)}
-index_to_feature = {i : k for k, i in feature_to_index.items()}
+    for row, item in enumerate(representations):
+        for feature, value in item["representation"][feat_type].items():
+            data[row, feature_to_index[feature]] = value
+    output_vector.append(data)
+    
+    # save feature lookup
+    with open(f'{feat_type}_lookup.json', 'wt') as f:
+        f.write(json.dumps(feature_to_index, indent=4))
 
-author_to_index = {k : i for i, k in enumerate(authors)}
-index_to_author = {i : k for k, i in author_to_index.items()}
-  
-data = np.zeros(shape=(len(representations), len(features)))
-y_data = []
-for row, item in enumerate(representations):
-    y_data.append(author_to_index[item["author"]])
-    for feature, value in item["representation"].items():
-        data[row, feature_to_index[feature]] = value
+# stack the distributions together
+output_vector = np.hstack(output_vector)
 
-# X_train, X_test, y_train, y_test = train_test_split(data, y_data, 
-#                                     test_size=0.2, 
-#                                     random_state=args.random_seed)
-# NOTE: actually not splitting here bc we will want to evaluate this model on 
-# or do we split and then save unmodified test set to disk, then 
+X_train, X_test, y_train, y_test = train_test_split(output_vector, labels_vector, 
+                                    test_size=0.2, 
+                                    random_state=args.random_seed)
 
 model = GaussianNB()
-model.fit(data, y_data)
+model.fit(X_train, y_train)
 
-y_predicted = model.predict(data)
-print(metrics.accuracy_score(y_predicted, y_data))
+# get validation
+y_predicted = model.predict(X_test)
+print(f'Accuracy on validation set: {metrics.accuracy_score(y_predicted, y_test)}')
 
-# save model
-with open(f'{args.model}.pkl','wb') as f:
-    pickle.dump(model,f)
+# # save model
+# with open(f'{args.model}.pkl','wb') as f:
+#     pickle.dump(model,f)
 
-# save author lookup
-with open(f'{args.author_index}.json', 'wt') as f:
-    f.write(json.dumps(author_to_index, indent=4))
-
-# save feature lookup
-with open(f'{args.ft_index}.json', 'wt') as f:
-    f.write(json.dumps(feature_to_index, indent=4))
