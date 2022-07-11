@@ -111,34 +111,33 @@ def checking_lists(str_spacy_doc, word_dict):
     with open('./scripts/comparison_lists.json', 'r') as f:
         comparison_dict = json.load(f)
 
-    comparison_counts = [count_occurence(comparison_dict['numbers'][0], word_dict),
-                        count_occurence(comparison_dict['numbers'][1], word_dict),
+    comparison_counts = [count_occurence(comparison_dict['low numbers'][0], word_dict),
+                        count_occurence(comparison_dict['low numbers'][1], word_dict),
+                        count_occurence(comparison_dict['high numbers'][0], word_dict),
+                        count_occurence(comparison_dict['high numbers'][1], word_dict),
+                        count_occurence(comparison_dict['ordinal numbers'][0], word_dict),
+                        count_occurence(comparison_dict['ordinal numbers'][1], word_dict),
                         count_occurence(comparison_dict['spelling'][0], word_dict),
                         count_occurence(comparison_dict['spelling'][1], word_dict),
                         count_occurence_phrase(comparison_dict['contractions'][0], str_spacy_doc),
                         count_occurence_phrase(comparison_dict['contractions'][1], str_spacy_doc)]
     
-    comparison_names = ['digits','numbers','British','American','contracted','not contracted']
+    comparison_names = ['low digits','low numbers','high digits','high numbers','ordinal digits','ordinal numbers','British','American','contracted','not contracted']
     comparison_feats = dict(zip(comparison_names, comparison_counts))
     
     # Function words (taken from PAN21 winner)
     with open('./scripts/function_words.json', 'r') as f:
         function_words = json.load(f) #augmented from the NLTK stopwords list
 
-        # function_word_feature = []
         function_word_feature = {}
         function_phrase_feature = {}
         for w in function_words['words']:
             if w in word_dict and word_dict[w] != 0:
                 function_word_feature[w] = word_dict[w]
-            # else:
-            #     function_word_feature.append(0)
-        # function_phrase_feature = [str_spacy_doc.lower().count(p) for p in function_words['phrases']]
+        
         function_phrase_feature = {p: str_spacy_doc.lower().count(p) for p in function_words['phrases'] if str_spacy_doc.lower().count(p) != 0}
 
-    # function_features = [function_word_feature, function_phrase_feature]
     function_features = function_word_feature | function_phrase_feature
-
     return comparison_feats, function_features          
 
 # Get special character frequencies
@@ -161,7 +160,7 @@ def postag_freqs(spacy_doc):
     postag_list = [0] * 16
     word_properties = ['long words','short words','all caps','uppercase']
     wordprop_list = [0] * 4
-    # for (word, tag) in pos_tag(tokens):
+
     for token in spacy_doc:
         if token.pos_ in ['ADJ']:
             postag_list[0] += 1
@@ -199,7 +198,7 @@ def postag_freqs(spacy_doc):
         # Word properties
         if len(token.text) >= 15: #arbitrary
             wordprop_list[0] += 1
-        elif len(token.text) in [2, 3, 4]:
+        elif len(token.text) in [2, 3, 4]: #not 1 to exclude punctuation
             wordprop_list[1] += 1
         if token.text.isupper():
             wordprop_list[2] += 1
