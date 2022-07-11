@@ -64,6 +64,7 @@ word_list = stopwords.words("english") if args.feature_selection_method == "stop
 
 # Get readability scores
 def readability_features(subdoc):
+    textstat_tests = ['Flesch reading ease','Smog index','Flesch-Kincaid grade','Coleman-Liau index','Automated readability index','Dale-Chall readability score','Difficult words','Linsear write formula','Gunning Fog index']
     textstat_scores = [textstat.flesch_reading_ease(subdoc),
                          textstat.smog_index(subdoc),
                          textstat.flesch_kincaid_grade(subdoc),
@@ -73,7 +74,7 @@ def readability_features(subdoc):
                          textstat.difficult_words(subdoc),
                          textstat.linsear_write_formula(subdoc),
                          textstat.gunning_fog(subdoc)]
-    return textstat_scores
+    return dict(zip(textstat_tests, textstat_scores))
 
 # Functions for checking_lists
 def count_occurence(check_word_list, word_list_all):
@@ -91,6 +92,7 @@ def count_occurence_phrase(phrase_list, str_spacy_doc):
 
 # Get properties of sentences
 def sentence_props(spacy_doc):
+    sent_lengths = ['0-10','10-20','20-30','30-40','40-50','>50']
     sent_length_list = [0, 0, 0, 0, 0, 0]  # 0-10,10-20,20-30,30-40,40-50,>50
     for sent in spacy_doc.sents:
         num_tokens_sent = len(sent)
@@ -98,10 +100,9 @@ def sentence_props(spacy_doc):
             sent_length_list[-1] += 1
         else:
             sent_length_list[int(num_tokens_sent / 10)] += 1
-    props = ['# sentences', 'sentence lengths']
-    sent_props = [len(list(spacy_doc.sents)), sent_length_list]
-    sent_props_dict = dict(zip(props, sent_props))
-    return sent_props_dict 
+    sent_props = dict(zip(sent_lengths, sent_length_list))
+    sent_props['# sentences'] = len(list(spacy_doc.sents))
+    return sent_props
 
 # Get stylistic choices and (augmented) function words
 def checking_lists(str_spacy_doc, word_dict):
@@ -124,98 +125,87 @@ def checking_lists(str_spacy_doc, word_dict):
     with open('./scripts/function_words.json', 'r') as f:
         function_words = json.load(f) #augmented from the NLTK stopwords list
 
-        function_word_feature = []
+        # function_word_feature = []
+        function_word_feature = {}
+        function_phrase_feature = {}
         for w in function_words['words']:
-            if w in word_dict:
-                function_word_feature.append(word_dict[w])
-            else:
-                function_word_feature.append(0)
-            if w in word_dict:
-                function_word_feature.append(word_dict[w])
-            else:
-                function_word_feature.append(0)
-        function_phrase_feature = [str_spacy_doc.lower().count(p) for p in function_words['phrases']]
+            if w in word_dict and word_dict[w] != 0:
+                function_word_feature[w] = word_dict[w]
+            # else:
+            #     function_word_feature.append(0)
+        # function_phrase_feature = [str_spacy_doc.lower().count(p) for p in function_words['phrases']]
+        function_phrase_feature = {p: str_spacy_doc.lower().count(p) for p in function_words['phrases'] if str_spacy_doc.lower().count(p) != 0}
 
-    function_features = [function_word_feature, function_phrase_feature]
+    # function_features = [function_word_feature, function_phrase_feature]
+    function_features = function_word_feature | function_phrase_feature
+
     return comparison_feats, function_features          
 
-# Get special character and punctuation mark frequencies
-def character_freqs(tokens): #, number_of_features):
+# Get special character frequencies
+def character_freqs(str_spacy_doc): 
     special_chars = ['~', '@', '#', '$', '%', '^', '&', '*', '_', '+', '=', '<', '>', '/', '\\', '|', ' ']
-    special_char_counts = [tokens.count(char) for char in special_chars]
+    special_char_counts = [str_spacy_doc.count(char) for char in special_chars]
     special_char_freqs = dict(zip(special_chars, special_char_counts))
+    return special_char_freqs
 
-    punct_marks = [ '.', '?', '!', ',', ';', ':', '-', '--', '---', '...', '(', ')', '[', ']', '{', '}', '\'', '"', '`']
+# Get punctuation mark frequencies
+def punctuation_freqs(tokens): 
+    punct_marks = [ '.', '?', '!', ',', ';', ':', '-', '--', '---', '..', '...', '(', ')', '[', ']', '{', '}', '\'', '"', '`']
     punct_counts = [tokens.count(punct) for punct in punct_marks]
     punct_freqs = dict(zip(punct_marks, punct_counts))
-    
-    return special_char_freqs, punct_freqs 
+    return punct_freqs 
 
-# Get POS tag frequencies and word properties -- NEED TO CONVERT TO SPACY STILL
-def postag_freqs(tokens):
-    pos_categories = ['Det','Poss','Pron','Adv','Wh','CC','CD','EX','FW','IN','Adj','LS','MD','Noun','RP','SYM','TO','UH','Verb']
-    postag_list = [0] * 19
+# Get POS tag frequencies and word properties 
+def postag_freqs(spacy_doc):
+    pos_categories = ['ADJ','ADP','ADV','AUX','CCONJ','DET','INTJ','NOUNs','NUM','PART','PRON','PUNCT','SCONJ','SYM','VERB','X']
+    postag_list = [0] * 16
     word_properties = ['long words','short words','all caps','uppercase']
     wordprop_list = [0] * 4
     # for (word, tag) in pos_tag(tokens):
     for token in spacy_doc:
-
-        # TODO: add punct tags?
-        #if word == '-' and tag == ':':
-        #    eos_hypen += 1
-
-        # some overlap possible in these tag categories
-        if token.pos_ in ['DT', 'PDT', 'WDT']:
+        if token.pos_ in ['ADJ']:
             postag_list[0] += 1
-        if token.pos_ in ['POS', 'PRP$', 'WP$']:
+        elif token.pos_ in ['ADP']:
             postag_list[1] += 1
-        if token.pos_ in ['PRP', 'PRP$', 'WP', 'WP$']:
+        elif token.pos_ in ['ADV']:
             postag_list[2] += 1
-        if token.pos_ in ['RB', 'RBR', 'RBS', 'WRB']:
+        elif token.pos_ in ['AUX']:
             postag_list[3] += 1
-        if token.pos_ in ['WDT', 'WP', 'WP$', 'WRB']:
+        elif token.pos_ in ['CCONJ']:
             postag_list[4] += 1
-
-        # no tag category overlap
-        elif token.pos_ in ['CC']:
+        elif token.pos_ in ['DET']:
             postag_list[5] += 1
-        elif token.pos_ in ['CD']:
+        elif token.pos_ in ['INTJ']:
             postag_list[6] += 1
-        elif token.pos_ in ['EX']:
+        elif token.pos_ in ['NOUN', 'PROPN']:
             postag_list[7] += 1
-        elif token.pos_ in ['FW']:
+        elif token.pos_ in ['NUM']:
             postag_list[8] += 1
-        elif token.pos_ in ['IN']:
+        elif token.pos_ in ['PART']:
             postag_list[9] += 1
-        elif tag.startswith('J'):
+        elif token.pos_ in ['PRON']:
             postag_list[10] += 1
-        elif token.pos_ in ['LS']:
+        elif token.pos_ in ['PUNCT']:
             postag_list[11] += 1
-        elif token.pos_ in ['MD']:
+        elif token.pos_ in ['SCONJ']:
             postag_list[12] += 1
-        elif tag.startswith('N'):
-            postag_list[13] += 1
-        elif token.pos_ in ['RP']:
-            postag_list[14] += 1
         elif token.pos_ in ['SYM']:
+            postag_list[13] += 1
+        elif token.pos_ in ['VERB']:
+            postag_list[14] += 1
+        elif token.pos_ in ['X']:
             postag_list[15] += 1
-        elif token.pos_ in ['TO']:
-            postag_list[16] += 1
-        elif token.pos_ in ['UH']:
-            postag_list[17] += 1
-        elif token.pos_.startswith('V'):
-            postag_list[18] += 1
     
         # Word properties
-        if len(word) >= 15: #arbitrary
+        if len(token.text) >= 15: #arbitrary
             wordprop_list[0] += 1
-        elif len(word) in [2, 3, 4]:
+        elif len(token.text) in [2, 3, 4]:
             wordprop_list[1] += 1
-        if word.isupper():
+        if token.text.isupper():
             wordprop_list[2] += 1
-        elif word[0].isupper():
+        elif token.text[0].isupper():
             wordprop_list[3] += 1
-    
+
     postag_dict = dict(zip(pos_categories, postag_list))
     wordprop_dict = dict(zip(word_properties, wordprop_list))
     return postag_dict, wordprop_dict
@@ -240,32 +230,32 @@ for fname in args.subdocuments:
 
             # Run SpaCy on the subdocument
             spacy_doc = nlp(subdocument)
+
+            # Get different versions of spacy_doc
             str_spacy_doc = str(spacy_doc)
-            tokens = [token.text for token in spacy_doc]
-            
+            tokens = [token.text.lower() for token in spacy_doc]
             word_dict = {}
-            pos_tag_list = [0] * 19
-
-            # Sentence features
-            item['features']["sentence properties"] = sentence_props(spacy_doc)
-
-            # Tokenized doc (list of tokens) features
             for token in spacy_doc:  
                 word_dict.setdefault(token.text, 0)
                 word_dict[token.text] += 1  
-                
+
+            # Extract features
+            item['features']["sentence properties"] = sentence_props(spacy_doc)
+ 
             comparison_list, function_list = checking_lists(str_spacy_doc, word_dict)
             item['features']["comparisons"] = comparison_list
             item['features']["function words"] = function_list
 
-            spec_char_dict, punct_dict = character_freqs(tokens) 
-            item["features"]["special chars"] = spec_char_dict
-            item["features"]["punctuation"] = punct_dict
+            item["features"]["special chars"] = character_freqs(str_spacy_doc) 
+            item["features"]["punctuation"] = punctuation_freqs(tokens)
             
-            # TODO
-            # pos_dict, word_prop_dict = postag_freqs(word_list)
-            # item["features"]["POS"] = pos_dict
-            # item["features"]["word properties"] = word_prop_dict
+            pos_dict, word_prop_dict = postag_freqs(spacy_doc)
+            item["features"]["POS"] = pos_dict
+            num_words = len(tokens)
+            word_prop_dict["# words"] = num_words
+            num_tokens = len(word_dict)
+            word_prop_dict["# tokens"] = num_tokens
+            item["features"]["word properties"] = word_prop_dict
 
             # for word in tokenized_subdoc:
             #     word = word.lower() if args.lowercase else word
