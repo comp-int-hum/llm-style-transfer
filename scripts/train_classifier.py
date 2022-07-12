@@ -6,6 +6,15 @@ import pickle
 import numpy as np
 
 from sklearn.naive_bayes import GaussianNB
+# TODO: implement support for these classifiers
+# from sklearn.neural_network import MLPClassifier
+# from sklearn.neighbors import KNeighborsClassifier
+# from sklearn.svm import SVC
+# from sklearn.gaussian_process import GaussianProcessClassifier
+# from sklearn.gaussian_process.kernels import RBF
+# from sklearn.tree import DecisionTreeClassifier
+# from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier
+# from sklearn.discriminant_analysis import QuadraticDiscriminantAnalysis
 from sklearn.model_selection import train_test_split
 from sklearn import metrics
 
@@ -47,15 +56,13 @@ labels_vector = []
 for item in representations:
     labels_vector.append(labels_to_index[item[args.labels]])
 
-# would it make sense to do this feature_to_index thing as many times as types of features and then add the
-# arrays together at the end? that way we can still do the indexing in the smart way.
 output_vector = []
-
 for feat_type in args.feats:
     feature_to_index = {k : i for i, k in enumerate(features[feat_type])}
     index_to_feature = {i : k for k, i in feature_to_index.items()}
-    data = np.zeros(shape=(len(representations), len(features[feat_type])))
     
+    # this shape is key, it means that the dense features will still be saved as sparse
+    data = np.zeros(shape=(len(representations), len(features[feat_type])))
     for row, item in enumerate(representations):
         for feature, value in item["representation"][feat_type].items():
             data[row, feature_to_index[feature]] = value
@@ -72,14 +79,15 @@ X_train, X_test, y_train, y_test = train_test_split(output_vector, labels_vector
                                     test_size=0.2, 
                                     random_state=args.random_seed)
 
+# TODO: add support for other classifiers, group into a fn
 model = GaussianNB()
 model.fit(X_train, y_train)
 
 # get validation
 y_predicted = model.predict(X_test)
-print(f'Accuracy on validation set: {metrics.accuracy_score(y_predicted, y_test)}')
+print(f'F1 on validation set: {metrics.f1(y_predicted, y_test)}')
 
-# # save model
-# with open(f'{args.model}.pkl','wb') as f:
-#     pickle.dump(model,f)
+# save model
+with open(f'{args.model}.pkl','wb') as f:
+    pickle.dump(model,f)
 

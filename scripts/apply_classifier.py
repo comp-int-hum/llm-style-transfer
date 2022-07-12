@@ -54,13 +54,13 @@ for row, item in enumerate(representations):
     for feature, value in item["representation"].items():
         data[row, feature_to_index[feature]] = value
 
-# get prediction
+# get prediction on val data
 y_predicted = model.predict(data)
-score = metrics.accuracy_score(y_predicted, y_data)
+# score = metrics.accuracy_score(y_predicted, y_data)
+score = metrics.f1(y_predicted, y_data)
 
 
 results = {'accuracy': score, 'preds': list(y_predicted), 'actual': y_data }
-
 
 with open(f'{args.predictions}.json', 'wt') as ifd:
     ifd.write(json.dumps(results, indent=4, cls=NumpyEncoder))

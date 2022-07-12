@@ -27,7 +27,20 @@ vars.AddVariables(
                     "UNMODIFIED_DOCUMENTS" : ["data/woman_of_colour/*tei"],
                     "MODIFIED_DOCUMENTS" : {},
                 }
+            },
+            "styll 3x3" : {
+                "variables": {
+                    "NUM_FOLDS" : 3,
+                    "FEATURE_SELECTION_METHOD_VALUES" : ["stopwords"],
+                    "NUM_FEATURES_TO_KEEP_VALUES" : [10, 40, 80, 160],
+                    "LOWERCASE_VALUES" : [False],
+                },
+                "data" : {
+                    "UNMODIFIED_DOCUMENTS" : ["/exp/apatel/style_transfer/style_transfer_datasets/reddit_test_query/random/source_author_posts/"]
+                }
+
             }
+
         }
     )
 )
@@ -47,14 +60,14 @@ env = Environment(
             action="python scripts/divide_document.py --document ${SOURCE} --subdocuments ${TARGET} --words_per_subdocument ${WORDS_PER_SUBDOCUMENT}"
         ),
         "ExtractRepresentations" : Builder( # extracts some number of (stylometric) features for each sub-document, using the specified method
-            action="python scripts/extract_representations.py --subdocuments ${SOURCES} --representations ${TARGET} ${'--lowercase' if LOWERCASE else ''} --feature_selection_method ${FEATURE_SELECTION_METHOD} --num_features_to_keep ${NUM_FEATURES_TO_KEEP}"
+            action="python scripts/extract_representations_orig.py --subdocuments ${SOURCES} --representations ${TARGET} ${'--lowercase' if LOWERCASE else ''} --feature_selection_method ${FEATURE_SELECTION_METHOD} --num_features_to_keep ${NUM_FEATURES_TO_KEEP}"
         ),
         "ClusterRepresentations" : Builder( # performs k-means clustering of (sub)-document representations
             action="python scripts/cluster_representations.py --representations ${SOURCE} --clustering ${TARGET} --cluster_count ${CLUSTER_COUNT}"
         ),
-        # "TrainClassifier" : Builder( # trains and serializes a (Naive Bayes?) classifier from features to author
-        #     action="python scripts/train_classifier.py --representations ${SOURCE} --model ${TARGET}"
-        # ),
+        "TrainClassifier" : Builder( # trains and serializes a (Naive Bayes?) classifier from features to author
+            action="python scripts/train_classifier.py --representations ${SOURCE} --model ${TARGET}"
+        ),
         # "ApplyClassifier" : Builder( # applies a trained classifier to given representations
         #     action="python scripts/apply_classifier.py --model ${SOURCES[0]} --representations ${SOURCES[1]} --results ${TARGET}"
         # ),
