@@ -82,7 +82,7 @@ def readability_features(subdoc):
 # Get properties of sentences
 def sentence_props(spacy_doc):
     sent_lengths = ['0-10','10-20','20-30','30-40','40-50','>50']
-    sent_length_list = [0, 0, 0, 0, 0, 0]  # 0-10,10-20,20-30,30-40,40-50,>50
+    sent_length_list = [0, 0, 0, 0, 0, 0]  # 0-10,10-20,20-30,30-40,40-50,>50 tokens (not words)
     for sent in spacy_doc.sents:
         num_tokens_sent = len(sent)
         if num_tokens_sent >= 50:
@@ -262,10 +262,10 @@ for fname in args.subdocuments:
             pos_dict, word_prop_dict = postag_freqs(spacy_doc)
             item["features"]["POS"] = pos_dict
             
-            num_words = len(tokens)
-            word_prop_dict["# words"] = num_words
-            num_tokens = len(word_dict)
-            word_prop_dict["# tokens"] = num_tokens
+            num_tokens = len(tokens)
+            word_prop_dict["# tokens in doc"] = num_tokens #tokens not words b/c includes punct
+            num_unique_tokens = len(word_dict)
+            word_prop_dict["# unique tokens"] = num_unique_tokens #also includes punct
             item["features"]["word properties"] = word_prop_dict
 
             item["features"]["most freq tokens"] = most_freq_tokens(counter, 3, 30) #min_count, #num_top_tokens
