@@ -1,14 +1,12 @@
+import gzip
 import argparse
 import json
 from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--subdocuments", dest="subdocuments", nargs="+")
+parser.add_argument("--subdocuments", dest="subdocuments")
 parser.add_argument("--representations", dest="representations")
-parser.add_argument("--lowercase", dest="lowercase", default=False, action="store_true")
-parser.add_argument("--minimum_count", dest="minimum_count", default=1)
-parser.add_argument("--num_features_to_keep", dest="num_features_to_keep", type=int, default=200)
-parser.add_argument("--feature_selection_method", dest="feature_selection_method", choices=["stopwords", "frequency"], default="stopwords")
 args = parser.parse_args()
 
 def frequency_based_list(fnames, lowercase, number_of_words):
@@ -40,26 +38,37 @@ def frequency_based_list(fnames, lowercase, number_of_words):
     top_words = sorted(scored_words, reverse=True)[0:number_of_words]
     return [w for _, w in top_words]
 
-word_list = stopwords.words("english") if args.feature_selection_method == "stopwords" else frequency_based_list(args.subdocuments, args.lowercase, args.num_features_to_keep)
+representations = []
+with gzip.open(args.subdocuments, "rt") as ifd:
+    for subdocument in json.loads(ifd.read()):
+        uid = subdocument["id"]
+        text = subdocument["text"]
+        language = subdocument["provenance"]["language"]
+        representation = {
+            "id" : uid,
+            "text" : text,
+            "feature_sets" : {
+            },
+            "provenance" : subdocument["provenance"]
+        }
 
-items = []
-for fname in args.subdocuments:
-    with open(fname, "rt") as ifd:
-        text = json.loads(ifd.read())
-        author = text["author"]
-        title = text["title"]
-        for subdocument in text["subdocuments"]:
-            item = {
-                "author" : author,
-                "title" : title,
-                "representation" : {},
+        #
+        # here is where you should extract features (the first example is simple stopword-lookup)
+        #
+        if language in stopwords.fileids():
+            stopword_list = stopwords.words(language)
+            counts = {}
+
+            for word in word_tokenize(text.lower()):
+                if word in stopword_list:
+                    counts[word] = counts.get(word, 0) + 1
+            representation["feature_sets"]["stopwords_from_nltk"] = {
+                "categorical_distribution" : True,
+                "values" : counts
             }
-            for word in subdocument:
-                word = word.lower() if args.lowercase else word
-                
-                item["representation"][word] = item["representation"].get(word, 0) + 1
-            item["representation"] = {k : v / len(subdocument) for k, v in item["representation"].items() if v >= args.minimum_count and k in word_list}
-            items.append(item)
-            
-with open(args.representations, "wt") as ofd:
-    ofd.write(json.dumps(items, indent=4))
+
+        # after all features have been extracted:
+        representations.append(representation)
+        
+with gzip.open(args.representations, "wt") as ofd:
+    ofd.write(json.dumps(representations, indent=4))

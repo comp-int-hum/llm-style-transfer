@@ -1,1 +1,6 @@
-
+# # Example of overriding a variable defined in the SConstruct file:
+# DATA_PATH = "/some/location/on/computer/"
+# # Example of adding to a variable defined in the SConstruct file:
+# EXPERIMENTS["my_new_experiment"] = {
+# # experiment definition goes here
+# }

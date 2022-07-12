@@ -10,24 +10,42 @@ vars.AddVariables(
         400
     ),
     (
+        "DATA_PATH",
+        "The location where data sets can be found (see how '${DATA_PATH}' is used below)",
+        "data"
+    ),
+    (
+        "TRAIN_DEV_TEST_PROPORTIONS",
+        "Proportion of data splits for supervised training",
+        (0.8, 0.1, 0.1)
+    ),
+    (
         "EXPERIMENTS",
         "Define experiments in this dictionary",
-        {
+        {            
             "the_woman_of_colour" : {
                 "variables" : {
                     "NUM_FOLDS" : 3,
-                    "WORDS_PER_SUBDOCUMENT_VALUES" : [100, 400, 1600],
-                    "FEATURE_SELECTION_METHOD_VALUES" : ["stopwords"],
-                    "NUM_FEATURES_TO_KEEP_VALUES" : [10, 40, 80, 160],
-                    "CLUSTER_COUNT_VALUES" : [5, 10],
-                    "LOWERCASE_VALUES" : [False],
-                    "MODIFICATION_METHOD_VALUES" : [],                    
+                    "LANGUAGE" : "english",
+                    "TOKENS_PER_SUBDOCUMENT_VALUES" : [100, 400, 1600],
+                    "CLASSIFIER_VALUES" : ["naive_bayes"],
+                    "FEATURE_SETS_VALUES" : ["stopwords_from_nltk"],
+                    "TARGET_CLASS_VALUES" : [("author",)],
                 },
-                "data" : {
-                    "UNMODIFIED_DOCUMENTS" : ["data/woman_of_colour/*tei"],
-                    "MODIFIED_DOCUMENTS" : {},
-                }
-            }
+                "data" : "${DATA_PATH}/woman_of_colour.tgz",
+            },
+            "reddit_style_transfer" : {
+                "variables" : {
+                    "NUM_FOLDS" : 3,
+                    "LANGUAGE" : "english",
+                    "TOKENS_PER_SUBDOCUMENT_VALUES" : [100, 400, 1600],
+                    "CLUSTER_COUNT_VALUES" : [5, 10],
+                    "CLASSIFIER_VALUES" : ["naive_bayes"],
+                    "FEATURE_SETS_VALUES" : ["stopwords_from_nltk"],
+                    "TARGET_CLASS_VALUES" : [("author", "original_author", "style")],                    
+                },
+                "data" : "${DATA_PATH}/reddit_style_transfer.json.gz",
+            }            
         }
     )
 )
@@ -37,35 +55,38 @@ env = Environment(
     variables=vars,
     tools=[steamroller.generate],
     BUILDERS={
-        "ExtractDocument" : Builder( # turns various formats into a simple JSON object with a "text" and "author" fields
-            action="python scripts/extract_document.py --primary_source ${SOURCE} --document ${TARGET}"
+        "ExtractDocuments" : Builder( # turns various formats into a simple JSON object with a "text" and "author" fields
+            action="python scripts/extract_documents.py --primary_sources ${SOURCE} --documents ${TARGET} --language ${LANGUAGE}"
         ), 
         #"ModifyDocument" : Builder( # takes an original document and changes *just the text* in some interesting way
         #    action="python scripts/modify_documents.py --original ${SOURCE} --modified ${TARGET} --modification_method ${MODIFICATION_METHOD}"
         #),
         "DivideDocuments" : Builder( # splits a JSON object's "text" field into a list of subdocuments
-            action="python scripts/divide_document.py --document ${SOURCE} --subdocuments ${TARGET} --words_per_subdocument ${WORDS_PER_SUBDOCUMENT}"
+            action="python scripts/divide_document.py --documents ${SOURCE} --subdocuments ${TARGET} --tokens_per_subdocument ${TOKENS_PER_SUBDOCUMENT}"
         ),
         "ExtractRepresentations" : Builder( # extracts some number of (stylometric) features for each sub-document, using the specified method
-            action="python scripts/extract_representations.py --subdocuments ${SOURCES} --representations ${TARGET} ${'--lowercase' if LOWERCASE else ''} --feature_selection_method ${FEATURE_SELECTION_METHOD} --num_features_to_keep ${NUM_FEATURES_TO_KEEP}"
+            action="python scripts/extract_representations.py --subdocuments ${SOURCES} --representations ${TARGET}"
         ),
         "ClusterRepresentations" : Builder( # performs k-means clustering of (sub)-document representations
             action="python scripts/cluster_representations.py --representations ${SOURCE} --clustering ${TARGET} --cluster_count ${CLUSTER_COUNT}"
         ),
-        # "TrainClassifier" : Builder( # trains and serializes a (Naive Bayes?) classifier from features to author
-        #     action="python scripts/train_classifier.py --representations ${SOURCE} --model ${TARGET}"
-        # ),
-        # "ApplyClassifier" : Builder( # applies a trained classifier to given representations
-        #     action="python scripts/apply_classifier.py --model ${SOURCES[0]} --representations ${SOURCES[1]} --results ${TARGET}"
-        # ),
+        "SplitData" : Builder( # performs k-means clustering of (sub)-document representations
+            action="python scripts/split_data.py --representations ${SOURCE} --random_seed ${RANDOM_SEED} --train_dev_test_proportions ${TRAIN_DEV_TEST_PROPORTIONS} --train ${TARGETS[0]} --dev ${TARGETS[1]} --test ${TARGETS[2]}"
+        ),
+        "TrainClassifier" : Builder( # trains and serializes a (Naive Bayes?) classifier from features to author
+            action="python scripts/train_classifier.py --train ${SOURCES[0]} --dev ${SOURCES[1]} --classifier ${CLASSIFIER} --feature_sets ${FEATURE_SETS} --target_class ${TARGET_CLASS} --model ${TARGET}"
+        ),
+        "ApplyClassifier" : Builder( # applies a trained classifier to given representations
+            action="python scripts/apply_classifier.py --model ${SOURCES[0]} --test ${SOURCES[1]} --feature_sets ${FEATURE_SETS} --target_class ${TARGET_CLASS} --results ${TARGET}"
+        ),
         "SaveConfiguration" : Builder( # saves the experimental configuration at the current moment (a hack)
-            action="python scripts/save_configuration.py --configuration ${TARGET} --cluster_count ${CLUSTER_COUNT} --lowercase ${LOWERCASE} --words_per_subdocument ${WORDS_PER_SUBDOCUMENT} --feature_selection_method ${FEATURE_SELECTION_METHOD} --num_features_to_keep ${NUM_FEATURES_TO_KEEP} --fold ${FOLD}"
+            action="python scripts/save_configuration.py --configuration ${TARGET} --tokens_per_subdocument ${TOKENS_PER_SUBDOCUMENT} --feature_sets ${FEATURE_SETS} --fold ${FOLD} --target_class ${TARGET_CLASS}"
         ),
         # "EvaluateClassifications" : Builder( # performs some evaluation of classification performance (heatmap?)
         #    action="python scripts/evaluate_classifications.py --summary ${TARGET} ${SOURCES}"
         # ),
-        "EvaluateClusterings" : Builder( # plots adjusted mutual information of clusterings w.r.t. known authorship, against experimental settings
-            action="python scripts/evaluate_clusterings.py --summary ${TARGET} ${SOURCES}"
+        "EvaluateClassifications" : Builder(
+           action="python scripts/evaluate_classifications.py --summary ${TARGET} ${SOURCES}"
         )
     }
 )
@@ -81,88 +102,113 @@ env['PRINT_CMD_LINE_FUNC'] = print_cmd_line
 
 for experiment_name, experiment in env["EXPERIMENTS"].items():
 
-    # Marshall all of the relevant data for the experiment
-    unmodified_documents = [env.ExtractDocument(
-        "work/${EXPERIMENT_NAME}/data/unmodified/${SOURCE.name}.json",
-        p
-    ) for p in sum([Glob(x) for x in experiment["data"]["UNMODIFIED_DOCUMENTS"]], [])]
-    if len(unmodified_documents) == 0:
-        env.Exit(
-            "No unmodified documents: make sure there are files underneath 'data/' that match values in the experiment's UNMODIFIED_DOCUMENTS variable"
-        )
-    modified_documents = {
-        k : sum([Glob(x) for x in v], []) for k, v in experiment["data"]["MODIFIED_DOCUMENTS"].items()
-    }
-    for modification_method in experiment["variables"]["MODIFICATION_METHOD_VALUES"]:        
-        modified_documents[modification_method] = []
-        for unmod_doc in unmodified_documents:
-            modified_documents[modification_method].append(
-                env.ModifyDocuments(
-                    "work/${EXPERIMENT_NAME}/modified/${MODIFICATION_METHOD}.json",
-                    unmod_doc,
-                    EXPERIMENT_NAME=experiment_name,
-                    MODIFICATION_METHOD=modification_method
-                )
-            )
-
-    # Run and evaluate basic clustering
-    results = []
-    for fold in range(1, experiment["variables"].get("NUM_FOLDS", 1) + 1):
-        for lowercase in experiment["variables"].get("LOWERCASE_VALUES", [True]):
-            for words_per_subdocument in experiment["variables"].get("WORDS_PER_SUBDOCUMENT_VALUES", [2000]):
-                all_subdocuments = []
-                for document in unmodified_documents:
-                    subdocuments = env.DivideDocuments(
-                        "work/${EXPERIMENT_NAME}/${FOLD}/${LOWERCASE}/${WORDS_PER_SUBDOCUMENT}/${SOURCE.name}.json",
-                        document,
-                        EXPERIMENT_NAME=experiment_name,
-                        FOLD=fold,
-                        LOWERCASE=lowercase,
-                        WORDS_PER_SUBDOCUMENT=words_per_subdocument
-                    )
-                    all_subdocuments.append(subdocuments)
-                for feature_selection_method in experiment["variables"].get("FEATURE_SELECTION_METHOD_VALUES", ["stopwords"]):
-                    for num_features_to_keep in experiment["variables"].get("NUM_FEATURES_TO_KEEP_VALUES", [100]):
-                        representations = env.ExtractRepresentations(
-                            "work/${EXPERIMENT_NAME}/${FOLD}/${LOWERCASE}/${WORDS_PER_SUBDOCUMENT}/${FEATURE_SELECTION_METHOD}/${NUM_FEATURES_TO_KEEP}/representations.json",
-                            all_subdocuments,
-                            EXPERIMENT_NAME=experiment_name,
-                            FOLD=fold,
-                            LOWERCASE=lowercase,
-                            NUM_FEATURES_TO_KEEP=num_features_to_keep,
-                            WORDS_PER_SUBDOCUMENT=words_per_subdocument,
-                            FEATURE_SELECTION_METHOD="stopwords"
-                        )
-                        for cluster_count in experiment["variables"].get("CLUSTER_COUNT_VALUES", [10]):
-                            clustering = env.ClusterRepresentations(
-                                "work/${EXPERIMENT_NAME}/${FOLD}/${LOWERCASE}/${WORDS_PER_SUBDOCUMENT}/${FEATURE_SELECTION_METHOD}/${NUM_FEATURES_TO_KEEP}/${CLUSTER_COUNT}/clustering.json",                            
-                                representations,
-                                EXPERIMENT_NAME=experiment_name,
-                                FOLD=fold,
-                                LOWERCASE=lowercase,
-                                NUM_FEATURES_TO_KEEP=num_features_to_keep,
-                                WORDS_PER_SUBDOCUMENT=words_per_subdocument,
-                                FEATURE_SELECTION_METHOD="stopwords",
-                                CLUSTER_COUNT=cluster_count
-                            )
-                            configuration = env.SaveConfiguration(
-                                "work/${EXPERIMENT_NAME}/${FOLD}/${LOWERCASE}/${WORDS_PER_SUBDOCUMENT}/${FEATURE_SELECTION_METHOD}/${NUM_FEATURES_TO_KEEP}/${CLUSTER_COUNT}/configuration.json",
-                                [],
-                                EXPERIMENT_NAME=experiment_name,
-                                FOLD=fold,
-                                LOWERCASE=lowercase,
-                                NUM_FEATURES_TO_KEEP=num_features_to_keep,
-                                WORDS_PER_SUBDOCUMENT=words_per_subdocument,
-                                FEATURE_SELECTION_METHOD="stopwords",
-                                CLUSTER_COUNT=cluster_count
-                            )                    
-                            results.append((clustering, configuration))
-    clustering_summary = env.EvaluateClusterings(
-        "work/${EXPERIMENT_NAME}/clustering_summary.png",
-        results,
+    full_documents = env.ExtractDocuments(
+        "work/${EXPERIMENT_NAME}/full_documents.json.gz",
+        experiment["data"],
         EXPERIMENT_NAME=experiment_name,
+        LANGUAGE=experiment["variables"].get("LANGUAGE", "english"),
     )
 
-    # Run and evaluate classification, applied both to unmodified and modified documents
-    for mod_name, mod_docs in modified_documents.items():
-        pass
+    classification_outputs = []
+    clustering_outputs = []
+    for tokens_per_subdocument in experiment["variables"].get("TOKENS_PER_SUBDOCUMENT_VALUES", [None]):
+        subdocuments = env.DivideDocuments(
+            "work/${EXPERIMENT_NAME}/${TOKENS_PER_SUBDOCUMENT}/subdocuments.json.gz",
+            full_documents,
+            EXPERIMENT_NAME=experiment_name,
+            TOKENS_PER_SUBDOCUMENT=tokens_per_subdocument
+        )
+        representations = env.ExtractRepresentations(
+            "work/${EXPERIMENT_NAME}/${TOKENS_PER_SUBDOCUMENT}/representations.json.gz",
+            subdocuments,
+            EXPERIMENT_NAME=experiment_name,
+            TOKENS_PER_SUBDOCUMENT=tokens_per_subdocument,
+        )
+        for fold in range(experiment["variables"]["NUM_FOLDS"]):
+            train, dev, test = env.SplitData(
+                ["work/${EXPERIMENT_NAME}/${TOKENS_PER_SUBDOCUMENT}/${FOLD}/%s.json.gz" % split for split in ["train", "dev", "test"]],
+                representations,
+                EXPERIMENT_NAME=experiment_name,
+                TOKENS_PER_SUBDOCUMENT=tokens_per_subdocument,
+                RANDOM_SEED=fold,
+                FOLD=fold
+            )
+            for feature_sets in experiment["variables"]["FEATURE_SETS_VALUES"]:
+                for classifier in experiment["variables"]["CLASSIFIER_VALUES"]:
+                    for target_class in experiment["variables"]["TARGET_CLASS_VALUES"]:
+                        model = env.TrainClassifier(
+                            "work/${EXPERIMENT_NAME}/${TOKENS_PER_SUBDOCUMENT}/${FOLD}/${CLASSIFIER}/${FEATURE_SETS_COMPONENTS}/${TARGET_CLASS_COMPONENT}/model.pkl.gz",
+                            [train, dev],
+                            EXPERIMENT_NAME=experiment_name,
+                            TOKENS_PER_SUBDOCUMENT=tokens_per_subdocument,
+                            RANDOM_SEED=fold,
+                            FOLD=fold,
+                            CLASSIFIER=classifier,
+                            FEATURE_SETS=feature_sets,
+                            FEATURE_SETS_COMPONENT="_".join([x for x in sorted(feature_sets)]),
+                            TARGET_CLASS=target_class,
+                            TARGET_CLASS_COMPONENT="_".join([x for x in sorted(target_class)])
+                        )
+                        output = env.ApplyClassifier(
+                            "work/${EXPERIMENT_NAME}/${TOKENS_PER_SUBDOCUMENT}/${FOLD}/${CLASSIFIER}/${FEATURE_SETS_COMPONENTS}/${TARGET_CLASS_COMPONENT}/output.json.gz",
+                            [model, test],
+                            EXPERIMENT_NAME=experiment_name,
+                            TOKENS_PER_SUBDOCUMENT=tokens_per_subdocument,
+                            RANDOM_SEED=fold,
+                            FOLD=fold,
+                            CLASSIFIER=classifier,
+                            FEATURE_SETS=feature_sets,
+                            FEATURE_SETS_COMPONENT="_".join([x for x in sorted(feature_sets)]),
+                            TARGET_CLASS=target_class,
+                            TARGET_CLASS_COMPONENT="_".join([x for x in sorted(target_class)])
+                        )
+                        config = env.SaveConfiguration(
+                            "work/${EXPERIMENT_NAME}/${TOKENS_PER_SUBDOCUMENT}/${FOLD}/${CLASSIFIER}/${FEATURE_SETS_COMPONENTS}/${TARGET_CLASS_COMPONENT}/config.json.gz",
+                            [],
+                            EXPERIMENT_NAME=experiment_name,
+                            TOKENS_PER_SUBDOCUMENT=tokens_per_subdocument,
+                            RANDOM_SEED=fold,
+                            FOLD=fold,
+                            CLASSIFIER=classifier,
+                            FEATURE_SETS=feature_sets,
+                            FEATURE_SETS_COMPONENT="_".join([x for x in sorted(feature_sets)]),
+                            TARGET_CLASS=target_class,
+                            TARGET_CLASS_COMPONENT="_".join([x for x in sorted(target_class)])
+                        )
+                        classification_outputs.append((config, output, model, train, dev, test))
+                
+    #                 for cluster_count in experiment["variables"].get("CLUSTER_COUNT_VALUES", [10]):
+    #                     clustering = env.ClusterRepresentations(
+    #                         "work/${EXPERIMENT_NAME}/${FOLD}/${LOWERCASE}/${TOKENS_PER_SUBDOCUMENT}/${FEATURE_SELECTION_METHOD}/${NUM_FEATURES_TO_KEEP}/${CLUSTER_COUNT}/clustering.json",                            
+    #                         representations,
+    #                         EXPERIMENT_NAME=experiment_name,
+    #                         FOLD=fold,
+    #                         LOWERCASE=lowercase,
+    #                         NUM_FEATURES_TO_KEEP=num_features_to_keep,
+    #                         TOKENS_PER_SUBDOCUMENT=tokens_per_subdocument,
+    #                         FEATURE_SELECTION_METHOD="stopwords",
+    #                         CLUSTER_COUNT=cluster_count
+    #                     )
+    #                     configuration = env.SaveConfiguration(
+    #                         "work/${EXPERIMENT_NAME}/${FOLD}/${LOWERCASE}/${TOKENS_PER_SUBDOCUMENT}/${FEATURE_SELECTION_METHOD}/${NUM_FEATURES_TO_KEEP}/${CLUSTER_COUNT}/configuration.json",
+    #                         [],
+    #                         EXPERIMENT_NAME=experiment_name,
+    #                         FOLD=fold,
+    #                         LOWERCASE=lowercase,
+    #                         NUM_FEATURES_TO_KEEP=num_features_to_keep,
+    #                         TOKENS_PER_SUBDOCUMENT=tokens_per_subdocument,
+    #                         FEATURE_SELECTION_METHOD="stopwords",
+    #                         CLUSTER_COUNT=cluster_count
+    #                     )                    
+    #                     results.append((clustering, configuration))
+    # clustering_summary = env.EvaluateClusterings(
+    #     "work/${EXPERIMENT_NAME}/clustering_summary.png",
+    #     results,
+    #     EXPERIMENT_NAME=experiment_name,
+    # )
+    classificiation_summary = env.EvaluateClassifications(
+        "work/${EXPERIMENT_NAME}/classification_summary.png",
+        classification_outputs,
+        EXPERIMENT_NAME=experiment_name,
+    )
+    
