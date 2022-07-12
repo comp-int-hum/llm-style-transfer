@@ -1,10 +1,11 @@
 import argparse
 import json
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize, sent_tokenize
-from nltk import pos_tag
 import numpy as np
 import textstat
+# from nltk.corpus import stopwords
+# from nltk.tokenize import word_tokenize, sent_tokenize
+# from nltk import pos_tag
+from collections import Counter
 from numpy import array, average
 import spacy
 # python -m spacy download en_core_web_trf
@@ -18,10 +19,10 @@ parser.add_argument("--num_features_to_keep", dest="num_features_to_keep", type=
 parser.add_argument("--feature_selection_method", dest="feature_selection_method", choices=["stopwords", "frequency"], default="stopwords")
 args = parser.parse_args()
 
-# Load English tokenizer, tagger, parser and NER
+# Load SpaCy English tokenizer, tagger, parser and NER
 nlp = spacy.load("en_core_web_trf")
 
-
+## Currently not being used; need to import nltk
 def frequency_based_list(fnames, lowercase, number_of_words):
     document_frequencies = {}
     author_frequencies = {}
@@ -38,7 +39,7 @@ def frequency_based_list(fnames, lowercase, number_of_words):
             unique_titles.add(title)
             total_document_count += len(text["subdocuments"])
             for subdocument in text["subdocuments"]:
-                tokenized_subdoc = word_tokenize(subdocument)
+                tokenized_subdoc = word_tokenize(subdocument) 
                 tokens = [w.lower() for w in tokenized_subdoc] if lowercase else tokenized_subdoc
                 for word in set(tokens):
                     document_frequencies[word] = document_frequencies.get(word, 0) + 1
@@ -60,7 +61,9 @@ def frequency_based_list(fnames, lowercase, number_of_words):
     top_words = sorted(scored_words, reverse=True)[0:number_of_words]
     return [w for _, w in top_words]
 
-word_list = stopwords.words("english") if args.feature_selection_method == "stopwords" else frequency_based_list(args.subdocuments, args.lowercase, args.num_features_to_keep)
+# word_list = stopwords.words("english") if args.feature_selection_method == "stopwords" else frequency_based_list(args.subdocuments, args.lowercase, args.num_features_to_keep)
+
+### --- STYLOMETRIC FEATURES --- ###
 
 # Get readability scores
 def readability_features(subdoc):
@@ -76,20 +79,6 @@ def readability_features(subdoc):
                          textstat.gunning_fog(subdoc)]
     return dict(zip(textstat_tests, textstat_scores))
 
-# Functions for checking_lists
-def count_occurence(check_word_list, word_list_all):
-    num_count = 0
-    for w in check_word_list:
-        if w in word_list_all:
-            num_count += word_list_all[w]
-    return num_count
-
-def count_occurence_phrase(phrase_list, str_spacy_doc):
-    num_count = 0
-    for phrase in phrase_list:
-        num_count += str_spacy_doc.lower().count(phrase)
-    return num_count
-
 # Get properties of sentences
 def sentence_props(spacy_doc):
     sent_lengths = ['0-10','10-20','20-30','30-40','40-50','>50']
@@ -104,12 +93,26 @@ def sentence_props(spacy_doc):
     sent_props['# sentences'] = len(list(spacy_doc.sents))
     return sent_props
 
-# Get stylistic choices and (augmented) function words
+# Functions needed for checking_lists
+def count_occurence(check_word_list, word_list_all):
+    num_count = 0
+    for w in check_word_list:
+        if w in word_list_all:
+            num_count += word_list_all[w]
+    return num_count
+
+def count_occurence_phrase(phrase_list, str_spacy_doc):
+    num_count = 0
+    for phrase in phrase_list:
+        num_count += str_spacy_doc.lower().count(phrase)
+    return num_count
+
+# Get (augmented) stylistic choices and function words
 def checking_lists(str_spacy_doc, word_dict):
 
-    # Stylistic choices (taken from PAN21 winner)
+    # Stylistic choices (augmented from PAN21 winner)
     with open('./scripts/comparison_lists.json', 'r') as f:
-        comparison_dict = json.load(f)
+        comparison_dict = json.load(f) #augmented from the original (orig = NLTK stopwords + Zlatkova 2018)
 
     comparison_counts = [count_occurence(comparison_dict['low numbers'][0], word_dict),
                         count_occurence(comparison_dict['low numbers'][1], word_dict),
@@ -125,9 +128,9 @@ def checking_lists(str_spacy_doc, word_dict):
     comparison_names = ['low digits','low numbers','high digits','high numbers','ordinal digits','ordinal numbers','British','American','contracted','not contracted']
     comparison_feats = dict(zip(comparison_names, comparison_counts))
     
-    # Function words (taken from PAN21 winner)
+    # Function words (augmented from PAN21 winner)
     with open('./scripts/function_words.json', 'r') as f:
-        function_words = json.load(f) #augmented from the NLTK stopwords list
+        function_words = json.load(f) #augmented from the original (orig = NLTK stopwords + Zlatkova 2018)
 
         function_word_feature = {}
         function_phrase_feature = {}
@@ -208,7 +211,13 @@ def postag_freqs(spacy_doc):
     postag_dict = dict(zip(pos_categories, postag_list))
     wordprop_dict = dict(zip(word_properties, wordprop_list))
     return postag_dict, wordprop_dict
-       
+
+# Get n most frequent tokens (NB: tokens, not words, so includes punctuation)
+def most_freq_tokens(counter, min_count, num_top_tokens):
+    most_freq = counter.most_common(num_top_tokens)
+    most_freq_dict = {k : v for k, v in most_freq if v >= min_count}
+    return most_freq_dict
+
 ###
 # Extract all features
 items = []
@@ -233,6 +242,7 @@ for fname in args.subdocuments:
             # Get different versions of spacy_doc
             str_spacy_doc = str(spacy_doc)
             tokens = [token.text.lower() for token in spacy_doc]
+            counter = Counter(tokens) 
             word_dict = {}
             for token in spacy_doc:  
                 word_dict.setdefault(token.text, 0)
@@ -246,22 +256,27 @@ for fname in args.subdocuments:
             item['features']["function words"] = function_list
 
             item["features"]["special chars"] = character_freqs(str_spacy_doc) 
+            
             item["features"]["punctuation"] = punctuation_freqs(tokens)
             
             pos_dict, word_prop_dict = postag_freqs(spacy_doc)
             item["features"]["POS"] = pos_dict
+            
             num_words = len(tokens)
             word_prop_dict["# words"] = num_words
             num_tokens = len(word_dict)
             word_prop_dict["# tokens"] = num_tokens
             item["features"]["word properties"] = word_prop_dict
 
-            # for word in tokenized_subdoc:
+            item["features"]["most freq tokens"] = most_freq_tokens(counter, 3, 30) #min_count, #num_top_tokens
+ 
+            ## Include the below if using the function frequency_based_list (needs to be updated)
+            # for word in subdocument:
             #     word = word.lower() if args.lowercase else word
                 
             #     item["representation"][word] = item["representation"].get(word, 0) + 1
             # item["representation"] = {k : v / len(subdocument) for k, v in item["representation"].items() if v >= args.minimum_count and k in word_list}
-            
+
             items.append(item)
             
 with open(args.representations, "wt") as ofd:
