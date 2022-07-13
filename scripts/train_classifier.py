@@ -26,6 +26,7 @@ parser.add_argument("--classifier", dest="classifer", choices=["Nearest Neighbor
 parser.add_argument("--model", dest="model", default='model')
 parser.add_argument("--features", dest="feats", nargs="+", help="the feature set(s) to use in the representation")
 parser.add_argument("--labels", dest="labels", help="the field to use as training labels")
+parser.add_argument("--output_dir", dest="output_dir")
 args = parser.parse_args()
 
 
@@ -36,27 +37,28 @@ features = {}
 labels = set()
 
 for item in representations:
-    labels.add(item[args.labels])
-    for k,v in item["representation"].items(): # the feature sets
+    labels.add(item["provenance"][args.labels])
+    for k,v in item["features"].items(): # the feature sets
         if k in args.feats:
             if k not in features.keys():
                 features[k] = set()
-            for l in item["representation"][k].keys():
+            for l in item["features"][k].keys():
                 features[k].add(l)
 
 labels_to_index = {k : i for i, k in enumerate(labels)}
 index_to_labels = {i : k for k, i in labels_to_index.items()}
 
 # save labels lookup
-with open(f'{args.label}_lookup.json', 'wt') as f:
+with open(os.path.join(args.output_dir, f'{args.labels}_lookup.json'), 'wt') as f:
     f.write(json.dumps(labels_to_index, indent=4))
 
 # get the labels
 labels_vector = []
 for item in representations:
-    labels_vector.append(labels_to_index[item[args.labels]])
+    labels_vector.append(labels_to_index[item["provenance"][args.labels]])
 
 output_vector = []
+ft_lookups = []
 for feat_type in args.feats:
     feature_to_index = {k : i for i, k in enumerate(features[feat_type])}
     index_to_feature = {i : k for k, i in feature_to_index.items()}
@@ -64,16 +66,18 @@ for feat_type in args.feats:
     # this shape is key, it means that the dense features will still be saved as sparse
     data = np.zeros(shape=(len(representations), len(features[feat_type])))
     for row, item in enumerate(representations):
-        for feature, value in item["representation"][feat_type].items():
+        for feature, value in item["features"][feat_type].items():
             data[row, feature_to_index[feature]] = value
     output_vector.append(data)
     
-    # save feature lookup
-    with open(f'{feat_type}_lookup.json', 'wt') as f:
-        f.write(json.dumps(feature_to_index, indent=4))
+    ft_lookups.append({feat_type:feature_to_index})
+
+# save feature lookup
+with open(os.path.join(args.output_dir,f'feature_lookup.json'), 'wt') as f:
+    f.write(json.dumps(ft_lookups, indent=4))
 
 # stack the distributions together
-output_vector = np.hstack(output_vector)
+output_vector = np.hstack(output_vector) # num_examples, features
 
 X_train, X_test, y_train, y_test = train_test_split(output_vector, labels_vector, 
                                     test_size=0.2, 
@@ -85,9 +89,9 @@ model.fit(X_train, y_train)
 
 # get validation
 y_predicted = model.predict(X_test)
-print(f'F1 on validation set: {metrics.f1(y_predicted, y_test)}')
+print(f'F1 on validation set: {metrics.f1_score(y_predicted, y_test)}')
 
 # save model
-with open(f'{args.model}.pkl','wb') as f:
-    pickle.dump(model,f)
+# with open(os.path.join(args.output_dir, f'{args.model}.pkl'),'wb') as f:
+#     pickle.dump(model,f)
 

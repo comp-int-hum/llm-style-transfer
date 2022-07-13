@@ -2,12 +2,10 @@ import argparse
 import json
 import numpy as np
 import textstat
-# from nltk.corpus import stopwords
-# from nltk.tokenize import word_tokenize, sent_tokenize
-# from nltk import pos_tag
 from collections import Counter
 from numpy import array, average
 import spacy
+from tqdm import tqdm
 # python -m spacy download en_core_web_trf
 
 parser = argparse.ArgumentParser()
@@ -22,8 +20,12 @@ args = parser.parse_args()
 # Load SpaCy English tokenizer, tagger, parser and NER
 nlp = spacy.load("en_core_web_trf")
 
-## Currently not being used; need to import nltk
+## Currently not being used; uses nltk
 def frequency_based_list(fnames, lowercase, number_of_words):
+    from nltk.corpus import stopwords
+    from nltk.tokenize import word_tokenize, sent_tokenize
+    from nltk import pos_tag
+
     document_frequencies = {}
     author_frequencies = {}
     title_frequencies = {}
@@ -224,61 +226,69 @@ items = []
 # rather than each doc being specific to an author, it's a list of all of them
 with open(args.subdocuments, "rt") as ifd:
     examples = json.loads(ifd.read())
-    for text in examples:
-        author = text["author_id"]
-        title = text["subreddit"]
-        for idx, subdocument in enumerate(text["texts"]):
-            item = {
-                "author" : author,
-                "title" : title,
-                "features" : {}
-            }
+    # NOTE: this will be modified to account for the new schema
+    for ex in tqdm(examples[:10]):
+        # author = ex["provenance"]["author"]
+        # could be subreddit or 
+        # title = ex["provenance"]["subreddit"] if not None else ex["provenance"]["title"]
+        # for idx, subdocument in enumerate(ex["text"]):
+        subdocument = ex["text"]
+        # item = {
+        #     "author" : author,
+        #     "title" : title,
+        #     "features" : {}
+        # }
+        # NOTE: we don't even need to parse these, just carry over the provenance
+        item = {
+            "provenance" : ex["provenance"],
+            "features" : {}
+        }
 
-            # Subdocument (list of strings) features
-            item["features"]["readability"] = readability_features(subdocument) 
+        # Subdocument (list of strings) features
+        item["features"]["readability"] = readability_features(subdocument) 
 
-            # Run SpaCy on the subdocument
-            spacy_doc = nlp(subdocument)
+        # Run SpaCy on the subdocument
+        spacy_doc = nlp(subdocument)
 
-            # Get different versions of spacy_doc
-            str_spacy_doc = str(spacy_doc)
-            tokens = [token.text.lower() for token in spacy_doc]
-            counter = Counter(tokens) 
-            word_dict = {}
-            for token in spacy_doc:  
-                word_dict.setdefault(token.text, 0)
-                word_dict[token.text] += 1  
+        # Get different versions of spacy_doc
+        str_spacy_doc = str(spacy_doc)
+        tokens = [token.text.lower() for token in spacy_doc]
+        counter = Counter(tokens) 
+        word_dict = {}
+        for token in spacy_doc:  
+            word_dict.setdefault(token.text, 0)
+            word_dict[token.text] += 1  
 
-            # Extract features
-            item['features']["sentence properties"] = sentence_props(spacy_doc)
- 
-            comparison_list, function_list = checking_lists(str_spacy_doc, word_dict)
-            item['features']["comparisons"] = comparison_list
-            item['features']["function words"] = function_list
+        # Extract features
+        item['features']["sentence properties"] = sentence_props(spacy_doc)
 
-            item["features"]["special chars"] = character_freqs(str_spacy_doc) 
+        comparison_list, function_list = checking_lists(str_spacy_doc, word_dict)
+        item['features']["comparisons"] = comparison_list
+        item['features']["function words"] = function_list
+
+        item["features"]["special chars"] = character_freqs(str_spacy_doc) 
+        
+        item["features"]["punctuation"] = punctuation_freqs(tokens)
+        
+        pos_dict, word_prop_dict = postag_freqs(spacy_doc)
+        item["features"]["POS"] = pos_dict
+        
+        num_tokens = len(tokens)
+        word_prop_dict["# tokens in doc"] = num_tokens #tokens not words b/c includes punct
+        num_unique_tokens = len(word_dict)
+        word_prop_dict["# unique tokens"] = num_unique_tokens #also includes punct
+        item["features"]["word properties"] = word_prop_dict
+
+        item["features"]["most freq tokens"] = most_freq_tokens(counter, 3, 30) #min_count, #num_top_tokens
+
+        ## Include the below if using the function frequency_based_list (needs to be updated)
+        # for word in subdocument:
+        #     word = word.lower() if args.lowercase else word
             
-            item["features"]["punctuation"] = punctuation_freqs(tokens)
-            
-            pos_dict, word_prop_dict = postag_freqs(spacy_doc)
-            item["features"]["POS"] = pos_dict
-            
-            num_tokens = len(tokens)
-            word_prop_dict["# tokens in doc"] = num_tokens #tokens not words b/c includes punct
-            num_unique_tokens = len(word_dict)
-            word_prop_dict["# unique tokens"] = num_unique_tokens #also includes punct
-            item["features"]["word properties"] = word_prop_dict
+        #     item["representation"][word] = item["representation"].get(word, 0) + 1
+        # item["representation"] = {k : v / len(subdocument) for k, v in item["representation"].items() if v >= args.minimum_count and k in word_list}
 
-            item["features"]["most freq tokens"] = most_freq_tokens(counter, 3, 30) #min_count, #num_top_tokens
- 
-            ## Include the below if using the function frequency_based_list (needs to be updated)
-            # for word in subdocument:
-            #     word = word.lower() if args.lowercase else word
-                
-            #     item["representation"][word] = item["representation"].get(word, 0) + 1
-            # item["representation"] = {k : v / len(subdocument) for k, v in item["representation"].items() if v >= args.minimum_count and k in word_list}
-
-            items.append(item)
+        items.append(item)
             
 with open(args.representations, "wt") as ofd:
     ofd.write(json.dumps(items, indent=4))
