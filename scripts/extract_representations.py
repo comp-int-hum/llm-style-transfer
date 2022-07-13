@@ -1,3 +1,4 @@
+import gzip
 import argparse
 import json
 import numpy as np
@@ -8,13 +9,10 @@ import spacy
 from tqdm import tqdm
 # python -m spacy download en_core_web_trf
 
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--subdocuments", dest="subdocuments")
 parser.add_argument("--representations", dest="representations")
-parser.add_argument("--lowercase", dest="lowercase", default=False, action="store_true")
-parser.add_argument("--minimum_count", dest="minimum_count", default=1)
-parser.add_argument("--num_features_to_keep", dest="num_features_to_keep", type=int, default=200)
-parser.add_argument("--feature_selection_method", dest="feature_selection_method", choices=["stopwords", "frequency"], default="stopwords")
 args = parser.parse_args()
 
 # Load SpaCy English tokenizer, tagger, parser and NER
@@ -292,3 +290,39 @@ with open(args.subdocuments, "rt") as ifd:
             
 with open(args.representations, "wt") as ofd:
     ofd.write(json.dumps(items, indent=4))
+
+##### Tom's code #####
+# representations = []
+# with gzip.open(args.subdocuments, "rt") as ifd:
+#     for subdocument in json.loads(ifd.read()):
+#         uid = subdocument["id"]
+#         text = subdocument["text"]
+#         language = subdocument["provenance"]["language"]
+#         representation = {
+#             "id" : uid,
+#             "text" : text,
+#             "feature_sets" : {
+#             },
+#             "provenance" : subdocument["provenance"]
+#         }
+
+#         #
+#         # here is where you should extract features (the first example is simple stopword-lookup)
+#         #
+#         if language in stopwords.fileids():
+#             stopword_list = stopwords.words(language)
+#             counts = {}
+
+#             for word in word_tokenize(text.lower()):
+#                 if word in stopword_list:
+#                     counts[word] = counts.get(word, 0) + 1
+#             representation["feature_sets"]["stopwords_from_nltk"] = {
+#                 "categorical_distribution" : True,
+#                 "values" : counts
+#             }
+
+#         # after all features have been extracted:
+#         representations.append(representation)
+        
+# with gzip.open(args.representations, "wt") as ofd:
+#     ofd.write(json.dumps(representations, indent=4))
