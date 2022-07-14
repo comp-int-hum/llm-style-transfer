@@ -82,11 +82,12 @@ def fluency_score(subdoc,model,tokenizer,):
     # predicted_class_id = logits.argmax().item()
     # predicted_class_label = model.config.id2label[predicted_class_id]
     # return logits, predicted_class_id, predicted_class_label
-    # return predicted_class_id # 0: fluent, 1: disfluent
-    # just the fluency probability
-    return probs[0]
+    # return predicted_class_id 
+    # 0: fluent, 1: disfluent
+    # just the probability of the affirmative label
+    return float(probs[0][0])
 
-def get_BERT_model(lang):
+def get_bert_model(lang):
     # most of these models are publically available
     private=False
     # specifying the path to grab the model from HF Hub
@@ -111,7 +112,7 @@ def get_BERT_model(lang):
     tokenizer = AutoTokenizer.from_pretrained(model_name, use_auth_token=private)
     return model, tokenizer
 
-def get_sent_emb(subdoc, model, tokenizer):
+def get_bert_emb(subdoc, model, tokenizer):
     """Returns a BERT-style document embedding"""
     #Mean Pooling - Take attention mask into account for correct averaging
     def mean_pooling(model_output, attention_mask):
@@ -120,6 +121,7 @@ def get_sent_emb(subdoc, model, tokenizer):
         return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
     # should I split the subdoc into sentences?
     # this is language specific, well, the hebrew will already be Hebrew
+  
     encoded_input = tokenizer(subdoc, padding=True, truncation=True, return_tensors='pt')
     # Compute token embeddings
     with torch.no_grad():
@@ -130,7 +132,8 @@ def get_sent_emb(subdoc, model, tokenizer):
 
     # print("Sentence embeddings:")
     # print(sentence_embeddings.shape)
-    return sentence_embeddings.numpy()
+    emb_dict = {f'bert_{idx}': float(v) for idx, v in enumerate(sentence_embeddings[0])}
+    return emb_dict
 
 
 ### --- STYLOMETRIC FEATURES --- ###
@@ -292,18 +295,17 @@ def most_freq_tokens(counter, min_count, num_top_tokens):
 # NOTE: we need to be more careful with the language flag here, it only makes sense to call some of these features
 # if the language is English, maybe it doesn't matter, it's
 # loading models that I only want to do once rather than call in a fn
-# fluency_tokenizer = AutoTokenizer.from_pretrained("cointegrated/roberta-large-cola-krishna2020")
-# fluency_model = AutoModelForSequenceClassification.from_pretrained("cointegrated/roberta-large-cola-krishna2020")
+fluency_tokenizer = AutoTokenizer.from_pretrained("cointegrated/roberta-large-cola-krishna2020")
+fluency_model = AutoModelForSequenceClassification.from_pretrained("cointegrated/roberta-large-cola-krishna2020")
 
-# bert_model, bert_tokenizer = get_BERT_model(args.language)
+bert_model, bert_tokenizer = get_bert_model(args.language)
 
 # Extract all features
 items = []
 
 with gzip.open(args.subdocuments, "rt") as ifd:
-    # examples = json.loads(ifd.read())
 
-    for subdocument in tqdm(json.loads(ifd.read())):
+    for subdocument in tqdm(json.loads(ifd.read())[:85]):
         uid = subdocument["id"]
         text = subdocument["text"]
         # language = subdocument["provenance"]["language"]
@@ -316,9 +318,8 @@ with gzip.open(args.subdocuments, "rt") as ifd:
         }
     
         #### Neural Features ####
-        # item["feature_sets"]["fluency"] = {"values": fluency_score(text,fluency_model,fluency_tokenizer)}
-        # TODO: make sure this outputs to an okay format, currently a torch tensor
-        # item["feature_sets"]["sentence_embedding"] = get_sent_emb(subdocument, bert_model, bert_tokenizer)
+        item["feature_sets"]["fluency"] = {"values": fluency_score(text, fluency_model,fluency_tokenizer)}
+        item["feature_sets"]["sentence_embedding"] = {"values" : get_bert_emb(text, bert_model, bert_tokenizer)}
         
         #### Stylometric Features ####
         # Subdocument (list of strings) features
@@ -373,6 +374,8 @@ with gzip.open(args.subdocuments, "rt") as ifd:
             
 with gzip.open(args.representations, "wt") as ofd:
     ofd.write(json.dumps(items, indent=4))
+# with open(f'{args.representations}.json', "wt") as ofd:
+#     ofd.write(json.dumps(items, indent=4))
 
 ##### Tom's code #####
 # representations = []

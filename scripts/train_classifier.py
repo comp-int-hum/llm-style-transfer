@@ -1,5 +1,10 @@
 import sklearn.naive_bayes as nb
 from sklearn.neural_network import MLPClassifier
+from sklearn.neighbors import KNeighborsClassifier
+
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.pipeline import Pipeline
+
 # from sklearn.neighbors import KNeighborsClassifier
 # from sklearn.svm import SVC
 # from sklearn.gaussian_process import GaussianProcessClassifier
@@ -53,11 +58,21 @@ if args.classifier == "naive_bayes":
     model = nb.MultinomialNB(fit_prior=False)
     X = pandas.DataFrame.from_records([d["features"] for d in train])
     X[X.isnull()] = 0.0
+    # HACK: temporary
+    X[X < 0 ] = 0.0
+    Y = [str(d["label"]) for d in train]
+    # NOTE: this is to avoid the negative values possible in some feature sets
+    # p = Pipeline([('Normalizing',MinMaxScaler()),('MultinomialNB',model)])
+    # p.fit(X,Y) 
+    model.fit(X, Y)
+
+elif args.classifier == "mlp":
+    model = MLPClassifier(alpha=1, max_iter=5000)
+    X = pandas.DataFrame.from_records([d["features"] for d in train])
+    X[X.isnull()] = 0.0
     Y = [str(d["label"]) for d in train]
     model.fit(X, Y)
 
-if args.classifier == "mlp":
-    pass
 
 with gzip.open(args.model, "wb") as ofd:
     ofd.write(pickle.dumps(model))
