@@ -305,7 +305,7 @@ items = []
 
 with gzip.open(args.subdocuments, "rt") as ifd:
 
-    for subdocument in tqdm(json.loads(ifd.read())[:85]):
+    for subdocument in tqdm(json.loads(ifd.read())):
         uid = subdocument["id"]
         text = subdocument["text"]
         # language = subdocument["provenance"]["language"]

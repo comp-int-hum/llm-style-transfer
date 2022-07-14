@@ -17,6 +17,7 @@ if __name__ == "__main__":
     source_authors = set()
     target_authors = set()
     source_documents = []
+
     for user in tf.data.experimental.load(args.source):
         texts = [x for x in user["body"]]
         uid = user["user_id"].numpy().decode("utf-8")

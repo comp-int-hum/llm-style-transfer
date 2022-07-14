@@ -56,9 +56,11 @@ if os.path.isdir(args.primary_source):
                 # NOTE: this catches the <vs> tags that don't have text
                 if None not in [item["provenance"]["chapter"], item["provenance"]["verse"]]:
                     ID_COUNTER += 1
-                    
+                    # TODO: check for ellipses
                     # HACK: for whatever reason, it flips the text? I manually reverse it again
-                    line = [x[::-1].strip() for x in verse.itertext()]
+                    # line = [x[::-1].strip() for x in verse.itertext()]
+                    line = [x.strip() for x in verse.itertext()]
+
                     # remove the empty entries
                     while("" in line):
                         line.remove("")
@@ -66,20 +68,21 @@ if os.path.isdir(args.primary_source):
                     line = line.replace('\n','')
                     item["text"] = line
                     result.append(item)
+                    
 
                     
                     
              
 #### saving the result to disk ####
-json_str = json.dumps(result, indent=4) 
+# json_str = json.dumps(result, indent=4) 
 
-with open(f'{args.experiment_name}.json', "wt") as ofd:
-    ofd.write(json_str)
+# with open(f'{args.experiment_name}.json', "wt") as ofd:
+#     ofd.write(json_str)
 
-json_bytes = json_str.encode('utf-8')           
+# json_bytes = json_str.encode('utf-8')           
 
-with gzip.open(f'{args.experiment_name}.json.gz', 'w') as ofd:       # 4. fewer bytes (i.e. gzip)
-    ofd.write(json_bytes) 
+# with gzip.open(f'{args.experiment_name}.json.gz', 'w') as ofd:       # 4. fewer bytes (i.e. gzip)
+#     ofd.write(json_bytes) 
 
 
 
