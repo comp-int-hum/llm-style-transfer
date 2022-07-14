@@ -1,5 +1,5 @@
 import sklearn.naive_bayes as nb
-# from sklearn.neural_network import MLPClassifier
+from sklearn.neural_network import MLPClassifier
 # from sklearn.neighbors import KNeighborsClassifier
 # from sklearn.svm import SVC
 # from sklearn.gaussian_process import GaussianProcessClassifier
@@ -14,6 +14,7 @@ import argparse
 import pickle
 import pandas
 
+# TODO: add multiple classifier support 
 parser = argparse.ArgumentParser()
 parser.add_argument("--train", dest="train")
 parser.add_argument("--dev", dest="dev")
@@ -55,6 +56,8 @@ if args.classifier == "naive_bayes":
     Y = [str(d["label"]) for d in train]
     model.fit(X, Y)
 
+if args.classifier == "mlp":
+    pass
 
 with gzip.open(args.model, "wb") as ofd:
     ofd.write(pickle.dumps(model))

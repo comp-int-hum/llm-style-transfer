@@ -41,33 +41,12 @@ vars.AddVariables(
                     "TOKENS_PER_SUBDOCUMENT_VALUES" : [100, 400, 1600],
                     "CLUSTER_COUNT_VALUES" : [5, 10],
                     "CLASSIFIER_VALUES" : ["naive_bayes"],
-                    "FEATURE_SETS_VALUES" : ["stopwords_from_nltk"],
+                    "FEATURE_SETS_VALUES" : [("readability", "sentence properties", "comparisons","function words", "special chars", "punctuation", "POS", "# tokens in doc", "# unique tokens", "word properties", "most freq tokens")],
                     "TARGET_CLASS_VALUES" : [("author", "original_author", "style")],                    
                 },
-<<<<<<< HEAD
-                "data" : {
-                    "UNMODIFIED_DOCUMENTS" : ["data/woman_of_colour/*tei"],
-                    "MODIFIED_DOCUMENTS" : {},
-                }
-            },
-            "styll 3x3" : {
-                "variables": {
-                    "NUM_FOLDS" : 3,
-                    "FEATURE_SELECTION_METHOD_VALUES" : ["stopwords"],
-                    "NUM_FEATURES_TO_KEEP_VALUES" : [10, 40, 80, 160],
-                    "LOWERCASE_VALUES" : [False],
-                },
-                "data" : {
-                    "UNMODIFIED_DOCUMENTS" : ["/exp/apatel/style_transfer/style_transfer_datasets/reddit_test_query/random/source_author_posts/"]
-                }
-
-            }
-
-=======
                 "data" : "${DATA_PATH}/reddit_style_transfer.json.gz",
-            }            
->>>>>>> main
-        }
+            }
+        }           
     )
 )
 
@@ -76,7 +55,7 @@ env = Environment(
     variables=vars,
     tools=[steamroller.generate],
     BUILDERS={
-        "ExtractDocuments" : Builder( # turns various formats into a simple JSON object with a "text" and "author" fields
+        "ExtractDocuments" : Builder( # turns various formats into a simple JSON object with "text", "provenance", and "id" fields
             action="python scripts/extract_documents.py --primary_sources ${SOURCE} --documents ${TARGET} --language ${LANGUAGE}"
         ), 
         #"ModifyDocument" : Builder( # takes an original document and changes *just the text* in some interesting way
@@ -85,41 +64,25 @@ env = Environment(
         "DivideDocuments" : Builder( # splits a JSON object's "text" field into a list of subdocuments
             action="python scripts/divide_document.py --documents ${SOURCE} --subdocuments ${TARGET} --tokens_per_subdocument ${TOKENS_PER_SUBDOCUMENT}"
         ),
-        "ExtractRepresentations" : Builder( # extracts some number of (stylometric) features for each sub-document, using the specified method
-<<<<<<< HEAD
-            action="python scripts/extract_representations_orig.py --subdocuments ${SOURCES} --representations ${TARGET} ${'--lowercase' if LOWERCASE else ''} --feature_selection_method ${FEATURE_SELECTION_METHOD} --num_features_to_keep ${NUM_FEATURES_TO_KEEP}"
-=======
+        "ExtractRepresentations" : Builder( # extracts some number of (stylometric) features for each sub-document
             action="python scripts/extract_representations.py --subdocuments ${SOURCES} --representations ${TARGET}"
->>>>>>> main
         ),
         "ClusterRepresentations" : Builder( # performs k-means clustering of (sub)-document representations
             action="python scripts/cluster_representations.py --representations ${SOURCE} --clustering ${TARGET} --cluster_count ${CLUSTER_COUNT}"
         ),
-<<<<<<< HEAD
-        "TrainClassifier" : Builder( # trains and serializes a (Naive Bayes?) classifier from features to author
-            action="python scripts/train_classifier.py --representations ${SOURCE} --model ${TARGET}"
-        ),
-        # "ApplyClassifier" : Builder( # applies a trained classifier to given representations
-        #     action="python scripts/apply_classifier.py --model ${SOURCES[0]} --representations ${SOURCES[1]} --results ${TARGET}"
-        # ),
-=======
-        "SplitData" : Builder( # performs k-means clustering of (sub)-document representations
+        "SplitData" : Builder( # splits feature vectors into train/dev/test sets
             action="python scripts/split_data.py --representations ${SOURCE} --random_seed ${RANDOM_SEED} --train_dev_test_proportions ${TRAIN_DEV_TEST_PROPORTIONS} --train ${TARGETS[0]} --dev ${TARGETS[1]} --test ${TARGETS[2]}"
         ),
-        "TrainClassifier" : Builder( # trains and serializes a (Naive Bayes?) classifier from features to author
+        "TrainClassifier" : Builder( # trains and serializes a ML classifier from features to a given target label (usually author)
             action="python scripts/train_classifier.py --train ${SOURCES[0]} --dev ${SOURCES[1]} --classifier ${CLASSIFIER} --feature_sets ${FEATURE_SETS} --target_class ${TARGET_CLASS} --model ${TARGET}"
         ),
         "ApplyClassifier" : Builder( # applies a trained classifier to given representations
             action="python scripts/apply_classifier.py --model ${SOURCES[0]} --test ${SOURCES[1]} --feature_sets ${FEATURE_SETS} --target_class ${TARGET_CLASS} --results ${TARGET}"
         ),
->>>>>>> main
         "SaveConfiguration" : Builder( # saves the experimental configuration at the current moment (a hack)
             action="python scripts/save_configuration.py --configuration ${TARGET} --tokens_per_subdocument ${TOKENS_PER_SUBDOCUMENT} --feature_sets ${FEATURE_SETS} --fold ${FOLD} --target_class ${TARGET_CLASS}"
         ),
-        # "EvaluateClassifications" : Builder( # performs some evaluation of classification performance (heatmap?)
-        #    action="python scripts/evaluate_classifications.py --summary ${TARGET} ${SOURCES}"
-        # ),
-        "EvaluateClassifications" : Builder(
+        "EvaluateClassifications" : Builder( # gathers various metrics and produces visuals
            action="python scripts/evaluate_classifications.py --summary ${TARGET} ${SOURCES}"
         )
     }

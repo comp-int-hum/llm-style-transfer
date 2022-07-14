@@ -7,6 +7,8 @@ import gzip
 import matplotlib.pyplot as plt
 from sklearn import metrics
 
+# TODO: add heatmap plotting and LaTeX tabular summary
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--summary", dest="summary")
 args, rest = parser.parse_known_args()

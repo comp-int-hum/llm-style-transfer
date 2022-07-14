@@ -7,12 +7,18 @@ from collections import Counter
 from numpy import array, average
 import spacy
 from tqdm import tqdm
+import transformers
+import torch
+import time
+from transformers import AutoModel, AutoTokenizer, AutoModelForSequenceClassification
 # python -m spacy download en_core_web_trf
 
+# TODO: add BERT support, depending on language flag, and fluency score
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--subdocuments", dest="subdocuments")
 parser.add_argument("--representations", dest="representations")
+parser.add_argument("--language", dest="language", )
 args = parser.parse_args()
 
 # Load SpaCy English tokenizer, tagger, parser and NER
@@ -62,9 +68,72 @@ def frequency_based_list(fnames, lowercase, number_of_words):
     return [w for _, w in top_words]
 
 # word_list = stopwords.words("english") if args.feature_selection_method == "stopwords" else frequency_based_list(args.subdocuments, args.lowercase, args.num_features_to_keep)
+### --- NEURAL FEATURES --- ###
+def fluency_score(subdoc,model,tokenizer,):
+
+    inputs = tokenizer(subdoc, return_tensors="pt")
+    
+    with torch.no_grad():
+        logits = model(**inputs).logits
+    
+    # convert logits to probabilities with softmax
+    m = torch.nn.Softmax(dim=1)
+    probs = m(logits)
+    # predicted_class_id = logits.argmax().item()
+    # predicted_class_label = model.config.id2label[predicted_class_id]
+    # return logits, predicted_class_id, predicted_class_label
+    # return predicted_class_id # 0: fluent, 1: disfluent
+    # just the fluency probability
+    return probs[0]
+
+def get_BERT_model(lang):
+    # most of these models are publically available
+    private=False
+    # specifying the path to grab the model from HF Hub
+    if lang == "english":
+        model_name = "bert-base-uncased"
+    elif lang == "hebrew":
+        model_name = "onlplab/alephbert-base"
+    elif lang == "latin":
+        model_name = "hmcgovern/latin_bert"
+        private=True
+        access_token = "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"
+    elif lang == "greek":
+        model_name = "pranaydeeps/Ancient-Greek-BERT"
+    elif lang == "arabic":
+        model_name = "asafaya/bert-base-arabic"
+    elif lang == "catalan":
+        # this model is uncased
+        model_name = "ClassCat/roberta-base-catalan"
+    else:
+        raise Exception("No suitable BERT model found for this language")
+    model = AutoModel.from_pretrained(model_name, use_auth_token=private)
+    tokenizer = AutoTokenizer.from_pretrained(model_name, use_auth_token=private)
+    return model, tokenizer
+
+def get_sent_emb(subdoc, model, tokenizer):
+    """Returns a BERT-style document embedding"""
+    #Mean Pooling - Take attention mask into account for correct averaging
+    def mean_pooling(model_output, attention_mask):
+        token_embeddings = model_output[0] #First element of model_output contains all token embeddings
+        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+        return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+    # should I split the subdoc into sentences?
+    # this is language specific, well, the hebrew will already be Hebrew
+    encoded_input = tokenizer(subdoc, padding=True, truncation=True, return_tensors='pt')
+    # Compute token embeddings
+    with torch.no_grad():
+        model_output = model(**encoded_input)
+
+    # Perform pooling. In this case, max pooling.
+    sentence_embeddings = mean_pooling(model_output, encoded_input['attention_mask'])
+
+    # print("Sentence embeddings:")
+    # print(sentence_embeddings.shape)
+    return sentence_embeddings.numpy()
+
 
 ### --- STYLOMETRIC FEATURES --- ###
-
 # Get readability scores
 def readability_features(subdoc):
     textstat_tests = ['Flesch reading ease','Smog index','Flesch-Kincaid grade','Coleman-Liau index','Automated readability index','Dale-Chall readability score','Difficult words','Linsear write formula','Gunning Fog index']
@@ -90,8 +159,8 @@ def sentence_props(spacy_doc):
         else:
             sent_length_list[int(num_tokens_sent / 10)] += 1
     sent_props = dict(zip(sent_lengths, sent_length_list))
-    sent_props['# sentences'] = len(list(spacy_doc.sents))
-    return sent_props
+    # sent_props['# sentences'] = len(list(spacy_doc.sents))
+    return sent_props, len(list(spacy_doc.sents))
 
 # Functions needed for checking_lists
 def count_occurence(check_word_list, word_list_all):
@@ -218,35 +287,45 @@ def most_freq_tokens(counter, min_count, num_top_tokens):
     most_freq_dict = {k : v for k, v in most_freq if v >= min_count}
     return most_freq_dict
 
-###
+####
+
+# NOTE: we need to be more careful with the language flag here, it only makes sense to call some of these features
+# if the language is English, maybe it doesn't matter, it's
+# loading models that I only want to do once rather than call in a fn
+# fluency_tokenizer = AutoTokenizer.from_pretrained("cointegrated/roberta-large-cola-krishna2020")
+# fluency_model = AutoModelForSequenceClassification.from_pretrained("cointegrated/roberta-large-cola-krishna2020")
+
+# bert_model, bert_tokenizer = get_BERT_model(args.language)
+
 # Extract all features
 items = []
-# rather than each doc being specific to an author, it's a list of all of them
-with open(args.subdocuments, "rt") as ifd:
-    examples = json.loads(ifd.read())
-    # NOTE: this will be modified to account for the new schema
-    for ex in tqdm(examples[:10]):
-        # author = ex["provenance"]["author"]
-        # could be subreddit or 
-        # title = ex["provenance"]["subreddit"] if not None else ex["provenance"]["title"]
-        # for idx, subdocument in enumerate(ex["text"]):
-        subdocument = ex["text"]
-        # item = {
-        #     "author" : author,
-        #     "title" : title,
-        #     "features" : {}
-        # }
-        # NOTE: we don't even need to parse these, just carry over the provenance
-        item = {
-            "provenance" : ex["provenance"],
-            "features" : {}
-        }
 
+with gzip.open(args.subdocuments, "rt") as ifd:
+    # examples = json.loads(ifd.read())
+
+    for subdocument in tqdm(json.loads(ifd.read())):
+        uid = subdocument["id"]
+        text = subdocument["text"]
+        # language = subdocument["provenance"]["language"]
+        item = {
+            "id" : uid,
+            "text" : text,
+            "feature_sets" : {
+            },
+            "provenance" : subdocument["provenance"]
+        }
+    
+        #### Neural Features ####
+        # item["feature_sets"]["fluency"] = {"values": fluency_score(text,fluency_model,fluency_tokenizer)}
+        # TODO: make sure this outputs to an okay format, currently a torch tensor
+        # item["feature_sets"]["sentence_embedding"] = get_sent_emb(subdocument, bert_model, bert_tokenizer)
+        
+        #### Stylometric Features ####
         # Subdocument (list of strings) features
-        item["features"]["readability"] = readability_features(subdocument) 
+        item["feature_sets"]["readability"] = {"values": readability_features(text)}
 
         # Run SpaCy on the subdocument
-        spacy_doc = nlp(subdocument)
+        spacy_doc = nlp(text)
 
         # Get different versions of spacy_doc
         str_spacy_doc = str(spacy_doc)
@@ -258,26 +337,30 @@ with open(args.subdocuments, "rt") as ifd:
             word_dict[token.text] += 1  
 
         # Extract features
-        item['features']["sentence properties"] = sentence_props(spacy_doc)
+        sent_props, num_sents = sentence_props(spacy_doc)
+        item['feature_sets']["sentence properties"] = {"values" : sent_props}
+        item['feature_sets']["# sentences"]= {"values" : num_sents}
 
         comparison_list, function_list = checking_lists(str_spacy_doc, word_dict)
-        item['features']["comparisons"] = comparison_list
-        item['features']["function words"] = function_list
+        item['feature_sets']["comparisons"] = {"values" : comparison_list}
+        item['feature_sets']["function words"] = {"values" : function_list}
 
-        item["features"]["special chars"] = character_freqs(str_spacy_doc) 
+        item["feature_sets"]["special chars"] = {"values" : character_freqs(str_spacy_doc)} 
         
-        item["features"]["punctuation"] = punctuation_freqs(tokens)
+        item["feature_sets"]["punctuation"] = {"values" : punctuation_freqs(tokens)} 
         
         pos_dict, word_prop_dict = postag_freqs(spacy_doc)
-        item["features"]["POS"] = pos_dict
+        item["feature_sets"]["POS"] = {"values" : pos_dict}
         
         num_tokens = len(tokens)
         word_prop_dict["# tokens in doc"] = num_tokens #tokens not words b/c includes punct
         num_unique_tokens = len(word_dict)
         word_prop_dict["# unique tokens"] = num_unique_tokens #also includes punct
-        item["features"]["word properties"] = word_prop_dict
+        item["feature_sets"]["word properties"] = {"values" : word_prop_dict}
 
-        item["features"]["most freq tokens"] = most_freq_tokens(counter, 3, 30) #min_count, #num_top_tokens
+        # NOTE: this never seems to return tokens, the text examples are too short
+        # but keep it in for other use cases
+        item["feature_sets"]["most freq tokens"] = most_freq_tokens(counter, 3, 30) #min_count, #num_top_tokens
 
         ## Include the below if using the function frequency_based_list (needs to be updated)
         # for word in subdocument:
@@ -288,7 +371,7 @@ with open(args.subdocuments, "rt") as ifd:
 
         items.append(item)
             
-with open(args.representations, "wt") as ofd:
+with gzip.open(args.representations, "wt") as ofd:
     ofd.write(json.dumps(items, indent=4))
 
 ##### Tom's code #####
