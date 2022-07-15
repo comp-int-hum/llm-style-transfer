@@ -7,9 +7,12 @@ import gzip
 import matplotlib.pyplot as plt
 from sklearn import metrics
 
+# TODO: add heatmap plotting and LaTeX tabular summary
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--summary", dest="summary")
 parser.add_argument("--scale", dest="scale", default=False, action="store_true")
+parser.add_argument("--plot", dest="plot", action="store_true")
 args, rest = parser.parse_known_args()
 
 results = []
@@ -47,12 +50,21 @@ for i in range(int(len(rest) / 6)):
         configuration["labels"] = [eval(x) for x in labels]
         configuration["f_score"] = fscore
         configuration["confusion_matrix"] = cm.tolist()
+
+    # if args.plot:
+    #     seaborn.set_context("paper")
+    #     fig = plt.figure()
+    #     sp = seaborn.heatmap(configuration["confusion_matrix"])
+    #     sp.palette="Paired"
+        
+    #     fig.tight_layout()
+    #     fig.savefig(f'{args.summary}.png')    
     results.append(configuration)
 
 df = pandas.DataFrame.from_records(results)
 #print(df)
 
-with gzip.open(args.summary, "wt") as ofd:
+with open(f'{args.summary}.json', "wt") as ofd:
     ofd.write(json.dumps(results, indent=4))
     
 # df = pandas.DataFrame(results)    

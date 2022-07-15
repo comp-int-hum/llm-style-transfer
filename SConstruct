@@ -23,17 +23,17 @@ vars.AddVariables(
         "EXPERIMENTS",
         "Define experiments in this dictionary",
         {            
-        #     "the_woman_of_colour" : {
-        #         "variables" : {
-        #             "NUM_FOLDS" : 3,
-        #             "LANGUAGE" : "english",
-        #             "TOKENS_PER_SUBDOCUMENT_VALUES" : [100, 400, 1600],
-        #             "CLASSIFIER_VALUES" : ["naive_bayes"],
-        #             "FEATURE_SETS_VALUES" : ["stopwords_from_nltk"],
-        #             "TARGET_CLASS_VALUES" : [("author",)],
-        #         },
-        #         "data" : "${DATA_PATH}/woman_of_colour.tgz",
-        #     },
+            "the_woman_of_colour" : {
+                "variables" : {
+                    "NUM_FOLDS" : 3,
+                    "LANGUAGE" : "english",
+                    "TOKENS_PER_SUBDOCUMENT_VALUES" : [100, 400, 1600],
+                    "CLASSIFIER_VALUES" : ["naive_bayes"],
+                    "FEATURE_SETS_VALUES" : ["stopwords_from_nltk"],
+                    "TARGET_CLASS_VALUES" : [("author",)],
+                },
+                "data" : "${DATA_PATH}/woman_of_colour.tgz",
+            },
             "reddit_style_transfer" : {
                 "variables" : {
                     "NUM_FOLDS" : 3,
@@ -41,13 +41,14 @@ vars.AddVariables(
                     "TOKENS_PER_SUBDOCUMENT_VALUES" : [0, 100, 400],
                     "CLUSTER_COUNT_VALUES" : [5, 10],
                     "CLASSIFIER_VALUES" : ["naive_bayes"],
-                    "FEATURE_SETS_VALUES" : ["stopwords_from_nltk"],
-                    "TARGET_CLASS_VALUES" : [("author", "original_author", "style")],
                     "SCALE" : True
+                    "FEATURE_SETS_VALUES" : [("readability", "sentence properties", "comparisons","function words", "special chars", "punctuation", "POS", "# tokens in doc", "# unique tokens", "word properties", "most freq tokens")],
+                    "TARGET_CLASS_VALUES" : [("author", "original_author", "style")],                    
+>>>>>>> embedding-models
                 },
                 "data" : "${DATA_PATH}/reddit_style_transfer.json.gz",
-            }            
-        }
+            }
+        }           
     )
 )
 
