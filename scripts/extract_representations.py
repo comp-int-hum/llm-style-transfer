@@ -19,6 +19,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--subdocuments", dest="subdocuments")
 parser.add_argument("--representations", dest="representations")
 parser.add_argument("--language", dest="language", )
+parser.add_argument("--limited_memory", dest="limited_memory", default=False, action="store_true")
 args = parser.parse_args()
 
 # Load SpaCy English tokenizer, tagger, parser and NER
@@ -212,7 +213,7 @@ def checking_lists(str_spacy_doc, word_dict):
         
         function_phrase_feature = {p: str_spacy_doc.lower().count(p) for p in function_words['phrases'] if str_spacy_doc.lower().count(p) != 0}
 
-    function_features = function_word_feature | function_phrase_feature
+    function_features = dict(list(function_word_feature.items()) + list(function_phrase_feature.items()))
     return comparison_feats, function_features          
 
 # Get special character frequencies
@@ -318,7 +319,8 @@ with gzip.open(args.subdocuments, "rt") as ifd:
         }
     
         #### Neural Features ####
-        item["feature_sets"]["fluency"] = {"values": fluency_score(text, fluency_model,fluency_tokenizer)}
+        if not args.limited_memory:
+            item["feature_sets"]["fluency"] = {"values": fluency_score(text, fluency_model,fluency_tokenizer)}
         item["feature_sets"]["sentence_embedding"] = {"values" : get_bert_emb(text, bert_model, bert_tokenizer)}
         
         #### Stylometric Features ####

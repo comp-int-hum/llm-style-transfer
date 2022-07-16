@@ -34,7 +34,7 @@ with gzip.open(args.train, "rt") as ifd:
     for item in json.loads(ifd.read()):
         datum = {"id" : item["id"], "features" : {}}
         for feature_set in args.feature_sets:
-            denom = sum(item["feature_sets"][feature_set]["values"].values()) if item["feature_sets"][feature_set].get("categorical_distribution", False) else 1.0
+            denom = sum(item["feature_sets"].get(feature_set, {"values":{}})["values"].values()) if item["feature_sets"].get(feature_set, {}).get("categorical_distribution", False) else 1.0
             datum["label"] = tuple([str(item["provenance"].get(x, None)) for x in args.target_class])
             for name, val in item["feature_sets"][feature_set]["values"].items():
                 datum["features"]["{}-{}".format(feature_set, name)] = val / denom
@@ -46,7 +46,7 @@ with gzip.open(args.dev, "rt") as ifd:
     for item in json.loads(ifd.read()):
         datum = {"id" : item["id"], "features" : {}}
         for feature_set in args.feature_sets:
-            denom = sum(item["feature_sets"][feature_set]["values"].values()) if item["feature_sets"][feature_set].get("categorical_distribution", False) else 1.0
+            denom = sum(item["feature_sets"].get(feature_set, {"values":{}})["values"].values()) if item["feature_sets"].get(feature_set, {}).get("categorical_distribution", False) else 1.0
             datum["label"] = tuple([str(item["provenance"].get(x, None)) for x in args.target_class])
             for name, val in item["feature_sets"][feature_set]["values"].items():
                 datum["features"]["{}-{}".format(feature_set, name)] = val / denom

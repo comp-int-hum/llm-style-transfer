@@ -20,6 +20,11 @@ vars.AddVariables(
         (0.8, 0.1, 0.1)
     ),
     (
+        "LIMITED_MEMORY",
+        "Running on a laptop or the like",
+        True
+    ),
+    (
         "EXPERIMENTS",
         "Define experiments in this dictionary",
         {            
@@ -29,7 +34,7 @@ vars.AddVariables(
                     "LANGUAGE" : "english",
                     "TOKENS_PER_SUBDOCUMENT_VALUES" : [100, 400, 1600],
                     "CLASSIFIER_VALUES" : ["naive_bayes"],
-                    "FEATURE_SETS_VALUES" : ["stopwords_from_nltk"],
+                    "FEATURE_SETS_VALUES" : [("function words",)],
                     "TARGET_CLASS_VALUES" : [("author",)],
                 },
                 "data" : "${DATA_PATH}/woman_of_colour.tgz",
@@ -41,10 +46,23 @@ vars.AddVariables(
                     "TOKENS_PER_SUBDOCUMENT_VALUES" : [0, 100, 400],
                     "CLUSTER_COUNT_VALUES" : [5, 10],
                     "CLASSIFIER_VALUES" : ["naive_bayes"],
-                    "SCALE" : True
-                    "FEATURE_SETS_VALUES" : [("readability", "sentence properties", "comparisons","function words", "special chars", "punctuation", "POS", "# tokens in doc", "# unique tokens", "word properties", "most freq tokens")],
+                    "SCALE" : True,
+                    "FEATURE_SETS_VALUES" : [
+                        (
+                            "readability", 
+                            "sentence properties", 
+                            "comparisons",
+                            "function words", 
+                            "special chars", 
+                            "punctuation", 
+                            "POS", 
+                            #"# tokens in doc", 
+                            #"# unique tokens", 
+                            "word properties", 
+                            #"most freq tokens"
+                        )
+                    ],
                     "TARGET_CLASS_VALUES" : [("author", "original_author", "style")],                    
->>>>>>> embedding-models
                 },
                 "data" : "${DATA_PATH}/reddit_style_transfer.json.gz",
             }
@@ -64,7 +82,7 @@ env = Environment(
             action="python scripts/divide_document.py --documents ${SOURCE} --subdocuments ${TARGET} --tokens_per_subdocument ${TOKENS_PER_SUBDOCUMENT}"
         ),
         "ExtractRepresentations" : Builder(
-            action="python scripts/extract_representations.py --subdocuments ${SOURCES} --representations ${TARGET}"
+            action="python scripts/extract_representations.py --subdocuments ${SOURCES} --representations ${TARGET} --language ${LANGUAGE} ${'--limited_memory' if LIMITED_MEMORY else ''}"
         ),
         "ClusterRepresentations" : Builder(
             action="python scripts/cluster_representations.py --representations ${SOURCE} --clustering ${TARGET} --cluster_count ${CLUSTER_COUNT}"
@@ -119,6 +137,7 @@ for experiment_name, experiment in env["EXPERIMENTS"].items():
             subdocuments,
             EXPERIMENT_NAME=experiment_name,
             TOKENS_PER_SUBDOCUMENT=tokens_per_subdocument,
+            LANGUAGE=experiment["variables"].get("LANGUAGE", "english"),
         )
         for fold in range(experiment["variables"]["NUM_FOLDS"]):
             train, dev, test = env.SplitData(
