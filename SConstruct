@@ -105,6 +105,7 @@ env = Environment(
     }
 )
 
+env.Decider("timestamp-newer")
 
 def print_cmd_line(s, target, source, env):
     if len(s) > int(env["OUTPUT_WIDTH"]):
