@@ -22,7 +22,7 @@ vars.AddVariables(
     (
         "LIMITED_MEMORY",
         "Running on a laptop or the like",
-        True
+        False
     ),
     (
         "EXPERIMENTS",
@@ -67,6 +67,11 @@ vars.AddVariables(
                 "data" : "${DATA_PATH}/reddit_style_transfer.json.gz",
             }
         }           
+    ),
+    (
+        "GPU_BUILDERS",
+        "Builders in this variable will get run on GPUs",
+        ["ExtractRepresentations"]
     )
 )
 
@@ -201,6 +206,6 @@ for experiment_name, experiment in env["EXPERIMENTS"].items():
         "work/${EXPERIMENT_NAME}/classification_summary.png",
         classification_outputs,
         EXPERIMENT_NAME=experiment_name,
-        SCALE=experiment["variables"].get("SCALE", False)
+        SCALE=experiment["variables"].get("SCALE", False),
     )
     

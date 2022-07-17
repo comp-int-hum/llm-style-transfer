@@ -3,7 +3,7 @@ pandas==1.4.2
 SCons==4.3.0
 seaborn==0.11.2
 sklearn==0.0
-SteamRoller==2.0.0
+SteamRoller==2.0.1
 textstat==0.7.3
 spacy==3.3.1
 transformers==4.20.1
