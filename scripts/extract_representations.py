@@ -184,7 +184,7 @@ def count_occurence_phrase(phrase_list, str_spacy_doc):
 def checking_lists(str_spacy_doc, word_dict):
 
     # Stylistic choices (augmented from PAN21 winner)
-    with open('./scripts/comparison_lists.json', 'r') as f:
+    with open('./helpers/comparison_lists.json', 'r') as f:
         comparison_dict = json.load(f) #augmented from the original (orig = NLTK stopwords + Zlatkova 2018)
 
     comparison_counts = [count_occurence(comparison_dict['low numbers'][0], word_dict),
@@ -202,7 +202,7 @@ def checking_lists(str_spacy_doc, word_dict):
     comparison_feats = dict(zip(comparison_names, comparison_counts))
     
     # Function words (augmented from PAN21 winner)
-    with open('./scripts/function_words.json', 'r') as f:
+    with open('./helpers/function_words.json', 'r') as f:
         function_words = json.load(f) #augmented from the original (orig = NLTK stopwords + Zlatkova 2018)
 
         function_word_feature = {}
