@@ -20,6 +20,7 @@ parser.add_argument("--subdocuments", dest="subdocuments")
 parser.add_argument("--representations", dest="representations")
 parser.add_argument("--language", dest="language", )
 parser.add_argument("--limited_memory", dest="limited_memory", default=False, action="store_true")
+parser.add_argument("--batch_size", dest="batch_size", default=1, type=int)
 args = parser.parse_args()
 
 # Load SpaCy English tokenizer, tagger, parser and NER
@@ -70,9 +71,9 @@ def frequency_based_list(fnames, lowercase, number_of_words):
 
 # word_list = stopwords.words("english") if args.feature_selection_method == "stopwords" else frequency_based_list(args.subdocuments, args.lowercase, args.num_features_to_keep)
 ### --- NEURAL FEATURES --- ###
-def fluency_score(subdoc,model,tokenizer,):
+def fluency_score(texts,model,tokenizer):
 
-    inputs = tokenizer(subdoc, return_tensors="pt")
+    inputs = tokenizer(texts, return_tensors="pt", padding=True)
     
     with torch.no_grad():
         logits = model(**inputs).logits
@@ -85,8 +86,8 @@ def fluency_score(subdoc,model,tokenizer,):
     # return logits, predicted_class_id, predicted_class_label
     # return predicted_class_id 
     # 0: fluent, 1: disfluent
-    # just the probability of the affirmative label
-    return float(probs[0][0])
+    # return just the probability of the affirmative label
+    return [float(x) for x in probs[:,0]] 
 
 def get_bert_model(lang):
     # most of these models are publically available
@@ -113,17 +114,17 @@ def get_bert_model(lang):
     tokenizer = AutoTokenizer.from_pretrained(model_name, use_auth_token=private)
     return model, tokenizer
 
-def get_bert_emb(subdoc, model, tokenizer):
+def get_bert_emb(texts, model, tokenizer):
     """Returns a BERT-style document embedding"""
     #Mean Pooling - Take attention mask into account for correct averaging
     def mean_pooling(model_output, attention_mask):
         token_embeddings = model_output[0] #First element of model_output contains all token embeddings
         input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
         return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
-    # should I split the subdoc into sentences?
     # this is language specific, well, the hebrew will already be Hebrew
   
-    encoded_input = tokenizer(subdoc, padding=True, truncation=True, return_tensors='pt')
+    # NOTE: we treat each subdocument as a sentence (they're short enough that it's okay)
+    encoded_input = tokenizer(texts, padding=True, truncation=True, return_tensors='pt')
     # Compute token embeddings
     with torch.no_grad():
         model_output = model(**encoded_input)
@@ -131,10 +132,10 @@ def get_bert_emb(subdoc, model, tokenizer):
     # Perform pooling. In this case, max pooling.
     sentence_embeddings = mean_pooling(model_output, encoded_input['attention_mask'])
 
-    # print("Sentence embeddings:")
-    # print(sentence_embeddings.shape)
-    emb_dict = {f'bert_{idx}': float(v) for idx, v in enumerate(sentence_embeddings[0])}
-    return emb_dict
+    result = []
+    for emb in sentence_embeddings:
+        result.append({f'bert_{idx}': float(v) for idx, v in enumerate(emb)})
+    return result
 
 
 ### --- STYLOMETRIC FEATURES --- ###
@@ -293,20 +294,20 @@ def most_freq_tokens(counter, min_count, num_top_tokens):
 
 ####
 
-# NOTE: we need to be more careful with the language flag here, it only makes sense to call some of these features
-# if the language is English, maybe it doesn't matter, it's
-# loading models that I only want to do once rather than call in a fn
 fluency_tokenizer = AutoTokenizer.from_pretrained("cointegrated/roberta-large-cola-krishna2020")
 fluency_model = AutoModelForSequenceClassification.from_pretrained("cointegrated/roberta-large-cola-krishna2020")
 
 bert_model, bert_tokenizer = get_bert_model(args.language)
 
 # Extract all features
+# TODO: add a check for language and extract only such feature types as make sense
 items = []
+batch_text = []
+indices = []
 
 with gzip.open(args.subdocuments, "rt") as ifd:
-
-    for subdocument in tqdm(json.loads(ifd.read())):
+    docs = json.loads(ifd.read())[:5]
+    for i, subdocument in enumerate(docs):
         uid = subdocument["id"]
         text = subdocument["text"]
         # language = subdocument["provenance"]["language"]
@@ -318,11 +319,37 @@ with gzip.open(args.subdocuments, "rt") as ifd:
             "provenance" : subdocument["provenance"]
         }
     
+        batch_text.append(text)
+        indices.append(i)
+ 
         #### Neural Features ####
-        if not args.limited_memory:
-            item["feature_sets"]["fluency"] = {"values": fluency_score(text, fluency_model,fluency_tokenizer)}
-        item["feature_sets"]["sentence_embedding"] = {"values" : get_bert_emb(text, bert_model, bert_tokenizer)}
+        fluency_scores = {}
+        sentence_embs = {}
         
+        # this should work if batch_size >= 1
+        if (i+1) % args.batch_size == 0:
+            if not args.limited_memory:
+                fluency_scores = {i : f for i,f in list(zip(indices, fluency_score(batch_text, fluency_model, fluency_tokenizer)))}
+                # old way
+                # item["feature_sets"]["fluency"] = {"values": fluency_score(batch_text, fluency_model,fluency_tokenizer)}
+        
+            sentence_embs = {i : s for i,s in list(zip(indices, get_bert_emb(batch_text, bert_model, bert_tokenizer)))}
+            # old way
+            # item["feature_sets"]["sentence_embedding"] = {"values" : get_bert_emb(batch_text, bert_model, bert_tokenizer)}
+            
+            # clear 
+            indices = []
+            batch_text = []
+        # the last batch, which may be ragged
+        elif i+1 == len(docs):
+            # sanity check, the there should be however many left over here
+            assert len(indices) == len(docs) % args.batch_size
+            if not args.limited_memory:
+                fluency_scores = {i : f for i,f in list(zip(indices, fluency_score(batch_text, fluency_model, fluency_tokenizer)))}
+
+        else:
+            pass
+
         #### Stylometric Features ####
         # Subdocument (list of strings) features
         item["feature_sets"]["readability"] = {"values": readability_features(text)}
@@ -371,13 +398,22 @@ with gzip.open(args.subdocuments, "rt") as ifd:
             
         #     item["representation"][word] = item["representation"].get(word, 0) + 1
         # item["representation"] = {k : v / len(subdocument) for k, v in item["representation"].items() if v >= args.minimum_count and k in word_list}
-
+        
         items.append(item)
-            
+
+        # update the appropriate indices with the neural features
+        if len(fluency_scores.items()) > 0:
+            for k,v in fluency_scores.items(): 
+                items[k]["feature_sets"]["fluency"] = {"values" : v}
+        if len(sentence_embs.items()) > 0:
+            for k,v in sentence_embs.items(): 
+                items[k]["feature_sets"]["sentence_embedding"] = {"values" : v}
+    
 with gzip.open(args.representations, "wt") as ofd:
     ofd.write(json.dumps(items, indent=4))
-# with open(f'{args.representations}.json', "wt") as ofd:
-#     ofd.write(json.dumps(items, indent=4))
+
+
+
 
 ##### Tom's code #####
 # representations = []
