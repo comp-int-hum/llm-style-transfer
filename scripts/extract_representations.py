@@ -306,7 +306,7 @@ batch_text = []
 indices = []
 
 with gzip.open(args.subdocuments, "rt") as ifd:
-    docs = json.loads(ifd.read())[:5]
+    docs = json.loads(ifd.read())
     for i, subdocument in enumerate(docs):
         uid = subdocument["id"]
         text = subdocument["text"]
@@ -342,11 +342,11 @@ with gzip.open(args.subdocuments, "rt") as ifd:
             batch_text = []
         # the last batch, which may be ragged
         elif i+1 == len(docs):
-            # sanity check, the there should be however many left over here
+            # sanity check, there should be however many left over here
             assert len(indices) == len(docs) % args.batch_size
             if not args.limited_memory:
                 fluency_scores = {i : f for i,f in list(zip(indices, fluency_score(batch_text, fluency_model, fluency_tokenizer)))}
-
+            sentence_embs = {i : s for i,s in list(zip(indices, get_bert_emb(batch_text, bert_model, bert_tokenizer)))}
         else:
             pass
 
