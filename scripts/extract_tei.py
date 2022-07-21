@@ -4,79 +4,167 @@ import gzip
 import json
 import re
 import os
-from nltk.tokenize import word_tokenize
+import tarfile
+from nltk.tokenize import word_tokenize, sent_tokenize
 from tqdm import tqdm
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--primary_source", dest="primary_source", default="data/wlc_dh")
-# NOTE: this is redundany, output will always be .json of the input file
-# parser.add_argument("--document", dest="document", default="exodus.json")
-# TODO: want to grab this from env variables, rather than explicitly, if possible
-parser.add_argument("--experiment_name", dest="experiment_name", default="wlc_dh")
+parser.add_argument("--primary_sources", dest="primary_sources", default="data/tirant_lo_blanc.txt")
+parser.add_argument("--documents", dest="documents")
+parser.add_argument("--language", dest="language", default="catalan")
+parser.add_argument("--aggregation_method", dest="aggregation_method", choices=['line', 'verse', 'chapter', 'book'], 
+                    help="What level of granularity to group the text spans", default='chapter')
+
 args = parser.parse_args()
 
-# NOTE: this is how to load a .json.gz
-# if args.primary_source.endswith("json.gz"):
-#     with gzip.open(args.primary_source, "rt") as f:
-#         data = json.loads(f.read())
-#     with open(f'{args.primary_source}.json', "wt") as ofd:
-#         ofd.write(json.dumps(data, indent=4))
-    # print(data)
-result = []
 
-# NOTE: different behaviour based on if it is a directory or an individual file.
+
+PREFIX = ''.join(args.primary_sources.split('.')[:-1]).split('/')[-1]
+
 ID_COUNTER=0
-if os.path.isdir(args.primary_source):
-    # NOTE: let's output it all into one .json
-    # all of them are going to be at the verse level
-    # if args.primary_source == "wlc_dh":
+
+def parse_xml(xml):
+    result = []
+    provenance = {}
     
-    for fname in os.listdir(args.primary_source):
-        print(f"****** \n Processing text in {fname} \n ******")
-        provenance = {}
-        with open(os.path.join(args.primary_source, fname), "rt") as ifd:
-            xml = etree.parse(ifd)
-        root = xml.getroot()
-        # HACK: grab book title
-        title = xml.findall(".//{*}titleStmt/{*}title")[-1].text
-        if title.endswith(".DH"):
-            provenance["DH"] = True
-            title = title[:-3]
-        provenance["title"] = title
-        lang = xml.find(".//{*}language").attrib['ident'].lower()
-        provenance["language"] = lang
+    # root = xml.getroot()
+    # HACK: grab book title
+    title = xml.findall(".//{*}titleStmt/{*}title")[-1].text
+    if title.endswith(".DH"):
+        provenance["DH"] = True
+        title = title[:-3]
+    provenance["title"] = title
+    # lang = xml.find(".//{*}language").attrib['ident'].lower()
+    # provenance["language"] = lang
+    for chapter in xml.findall(".//{*}c"):
+        for i, verse in enumerate(chapter):
+            item = {
+                "text" : [], 
+                "provenance": provenance, 
+                "id": f'{PREFIX}_{ID_COUNTER}'}
+            item["provenance"]["source"] = verse.attrib.get('s')
+            item["provenance"]["chapter"] = chapter.attrib.get('n')
+            item["provenance"]["verse"] = verse.attrib.get('n')
 
-        for chapter in tqdm(xml.findall(".//{*}c")):
-            for i, verse in enumerate(chapter):
-                item = {"text" : [], "provenance": provenance, "id": f'{args.experiment_name}_{ID_COUNTER}'}
-                item["provenance"]["source"] = verse.attrib.get('s')
-                item["provenance"]["chapter"] = chapter.attrib.get('n')
-                item["provenance"]["verse"] = verse.attrib.get('n')
+            # NOTE: this catches the <vs> tags that don't have text
+            if item["provenance"]["verse"] != None:
+            # if None not in [item["provenance"]["chapter"], item["provenance"]["verse"]]:
+                ID_COUNTER += 1
+                # TODO: check for ellipses 
+                # HACK: for whatever reason, it flips the text? I manually reverse it again
+                # line = [x[::-1].strip() for x in verse.itertext()]
+                line = [x.strip() for x in verse.itertext()]
 
-                # NOTE: this catches the <vs> tags that don't have text
-                if None not in [item["provenance"]["chapter"], item["provenance"]["verse"]]:
-                    ID_COUNTER += 1
-                    # TODO: check for ellipses
-                    # HACK: for whatever reason, it flips the text? I manually reverse it again
-                    # line = [x[::-1].strip() for x in verse.itertext()]
-                    line = [x.strip() for x in verse.itertext()]
+                # remove the empty entries
+                while("" in line):
+                    line.remove("")
+                
+                line = " ".join(line)
+                line = line.replace('\n','')
+                item["text"] = line
+                
+                result.append(item)
+    return result
 
-                    # remove the empty entries
-                    while("" in line):
-                        line.remove("")
-                    line = " ".join(line)
-                    line = line.replace('\n','')
-                    item["text"] = line
-                    result.append(item)
-                    
+def parse_txt(text):
+    # TODO: generalize, take in different delimiters
+    if "tirant_lo_blanc" in PREFIX:
+        if args.aggregation_method == "line":
+            text = text.replace('\n', ' ')
+            subdocs = sent_tokenize(text)
+        elif args.aggregation_method == "chapter":
+            # HACK: I first split on full stop, sub roman numerals, recombine, then split on numerals
+            # text = text.replace('\n', ' ')
+            lines = text.split('\n')
+            reg = r"^M{0,3}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$"
+            nums = [line for line in lines if re.match(reg, line.rstrip()[:-1])]
+            print(nums)
+            # words = word_tokenize(text)
+            
+            # print(words[1290:1330])
+            # print(words[1303])
+            # print(words[1303].isalnum())
+            # print(len(text.split('II.')))
+            
+            # print(re.search(reg, words[1334]))
 
-                    
-                    
-             
-#### saving the result to disk ####
-# json_str = json.dumps(result, indent=4) 
+            # formatted = []
+            # ct = 0
+            
+            # print([re.search(reg, word).group(1) for word in words])
+            # result = re.split(reg, text.strip())
+            # print(len(result))
 
-# with open(f'{args.experiment_name}.json', "wt") as ofd:
+            
+    
+            # for word in words:
+            #     match = re.search(reg, word)
+            #     if match:
+            #         print(match.group(0))
+            #     if re.search(reg,subdoc):
+            #         print(re.search(reg, subdoc))
+            #         ct += 1
+                # formatted.append(re.sub(r"^M{0,3}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$",'ROMAN_NUMERAL',subdoc))
+            # print(ct)
+            # subdocs = ".".join(formatted)
+            # subdocs = subdocs.split("ROMAN_NUMERAL")
+            # print(len(subdocs))
+            # print(subdocs[0])
+            # print(subdocs[1])
+
+        elif args.aggregation_method == "book":
+            subdocs = len(text.split("PART"))[1:]
+        else:
+            raise Exception("Please choose an aggregation method that is one of: line, chapter, and book")
+    result = []
+    return result
+
+print(PREFIX)
+results = []
+if args.primary_sources.endswith("tgz"):
+    tf = tarfile.open(args.primary_sources, "r:gz")
+    for fname in tf.getnames():
+        if fname.endswith(("tei", "xml")):
+            with tf.extract_file(fname) as ifd:
+                xml = etree.parse(fname)
+            results.extend(parse_xml(xml))
+elif args.primary_sources.endswith("json.gz"):               
+    with gzip.open(args.primary_sources, "rt") as ifd:
+        results.extend(json.loads(ifd.read()))
+elif args.primary_sources.endswith(".txt"):
+    with open(args.primary_sources, "rt") as ifd:
+        text = ifd.read()
+    results.extend(parse_txt(text))
+else:
+    raise Exception("The input document '{}' does not appear to be in a recognized format (either the extension is unknown, or you need to add handling logic for it to 'scripts/divide_documents.py')".format(args.primary_sources))
+
+print(results)
+# for fname in documents:
+#     # print(f"****** \n Processing text in {fname} \n ******")
+#     provenance = {}
+#     try:
+#         with tf.extractfile(fname) as ifd:
+#             xml = etree.parse(ifd)
+#     except:
+#         with open(fname) as ifd:
+#             xml = etree.parse(ifd)
+#     print(xml)
+#     
+#                 # NOTE: here the 'verse' and 'source' fields are correct
+#             # NOTE: here they're not
+
+
+# for i in range(len(results)):
+#     # maybe check formatting here, too?
+#     results[i]["provenance"]["language"] = args.language
+
+# # print('*****\n\n\n')
+
+# #### saving the result to disk ####
+
+# json_str = json.dumps(results, indent=4) 
+
+# with open(f'{args.documents}', "wt") as ofd:
 #     ofd.write(json_str)
 
 # json_bytes = json_str.encode('utf-8')           
