@@ -1,5 +1,5 @@
 import gzip
-import argparse
+import logging
 import json
 import numpy as np
 import textstat
@@ -13,18 +13,17 @@ import time
 from transformers import AutoModel, AutoTokenizer, AutoModelForSequenceClassification
 # python -m spacy download en_core_web_trf
 
+logging.basicConfig(
+    format="%(asctime)s %(message)s",
+    datefmt="%H:%M:%S %d-%m-%Y"
+)
+logger = logging.getLogger()
+
 # TODO: add BERT support, depending on language flag, and fluency score
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--subdocuments", dest="subdocuments")
-parser.add_argument("--representations", dest="representations")
-parser.add_argument("--language", dest="language", )
-parser.add_argument("--limited_memory", dest="limited_memory", default=False, action="store_true")
-parser.add_argument("--batch_size", dest="batch_size", default=1, type=int)
-args = parser.parse_args()
 
 # Load SpaCy English tokenizer, tagger, parser and NER
-nlp = spacy.load("en_core_web_trf")
+
 
 ## Currently not being used; uses nltk
 def frequency_based_list(fnames, lowercase, number_of_words):
@@ -71,13 +70,14 @@ def frequency_based_list(fnames, lowercase, number_of_words):
 
 # word_list = stopwords.words("english") if args.feature_selection_method == "stopwords" else frequency_based_list(args.subdocuments, args.lowercase, args.num_features_to_keep)
 ### --- NEURAL FEATURES --- ###
-def fluency_score(texts,model,tokenizer):
-
-    inputs = tokenizer(texts, return_tensors="pt", padding=True)
-    
+def fluency_score(texts,model,tokenizer, use_gpu):
+    logger.info("Starting batch...")
+    inputs = tokenizer(texts, return_tensors="pt", padding=True, truncation=True)
+    if use_gpu:
+        inputs.to("cuda")
     with torch.no_grad():
         logits = model(**inputs).logits
-    
+
     # convert logits to probabilities with softmax
     m = torch.nn.Softmax(dim=1)
     probs = m(logits)
@@ -114,7 +114,7 @@ def get_bert_model(lang):
     tokenizer = AutoTokenizer.from_pretrained(model_name, use_auth_token=private)
     return model, tokenizer
 
-def get_bert_emb(texts, model, tokenizer):
+def get_bert_emb(texts, model, tokenizer, use_gpu):
     """Returns a BERT-style document embedding"""
     #Mean Pooling - Take attention mask into account for correct averaging
     def mean_pooling(model_output, attention_mask):
@@ -125,6 +125,9 @@ def get_bert_emb(texts, model, tokenizer):
   
     # NOTE: we treat each subdocument as a sentence (they're short enough that it's okay)
     encoded_input = tokenizer(texts, padding=True, truncation=True, return_tensors='pt')
+    if use_gpu:
+        encoded_input.to("cuda")
+
     # Compute token embeddings
     with torch.no_grad():
         model_output = model(**encoded_input)
@@ -293,125 +296,160 @@ def most_freq_tokens(counter, min_count, num_top_tokens):
     return most_freq_dict
 
 ####
+if __name__ == "__main__":
 
-fluency_tokenizer = AutoTokenizer.from_pretrained("cointegrated/roberta-large-cola-krishna2020")
-fluency_model = AutoModelForSequenceClassification.from_pretrained("cointegrated/roberta-large-cola-krishna2020")
+    import argparse
+    import sys
 
-bert_model, bert_tokenizer = get_bert_model(args.language)
-
-# Extract all features
-# TODO: add a check for language and extract only such feature types as make sense
-items = []
-batch_text = []
-indices = []
-
-with gzip.open(args.subdocuments, "rt") as ifd:
-    docs = json.loads(ifd.read())
-    for i, subdocument in enumerate(docs):
-        uid = subdocument["id"]
-        text = subdocument["text"]
-        # language = subdocument["provenance"]["language"]
-        item = {
-            "id" : uid,
-            "text" : text,
-            "feature_sets" : {
-            },
-            "provenance" : subdocument["provenance"]
-        }
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--subdocuments", dest="subdocuments")
+    parser.add_argument("--representations", dest="representations")
+    parser.add_argument("--language", dest="language", )
+    parser.add_argument("--use_gpu", dest="use_gpu", default=False, action="store_true")
+    parser.add_argument("--batch_size", dest="batch_size", default=1, type=int)
+    args = parser.parse_args()
     
-        batch_text.append(text)
-        indices.append(i)
- 
-        #### Neural Features ####
-        fluency_scores = {}
-        sentence_embs = {}
-        
-        # this should work if batch_size >= 1
-        if (i+1) % args.batch_size == 0:
-            if not args.limited_memory:
-                fluency_scores = {i : f for i,f in list(zip(indices, fluency_score(batch_text, fluency_model, fluency_tokenizer)))}
+    logger.setLevel(logging.INFO)
+
+    if args.use_gpu:
+        spacy.require_gpu()
+
+    nlp = spacy.load("en_core_web_trf")
+    logger.info("Loaded spacy pipeline")
+
+    fluency_tokenizer = AutoTokenizer.from_pretrained("cointegrated/roberta-large-cola-krishna2020")
+    logger.info("Loaded fluency tokenizer")
+    
+    fluency_model = AutoModelForSequenceClassification.from_pretrained("cointegrated/roberta-large-cola-krishna2020")
+    logger.info("Loaded fluency model")
+
+    bert_model, bert_tokenizer = get_bert_model(args.language)
+    logger.info("Loaded bert model")
+
+    # Extract all features
+    # TODO: add a check for language and extract only such feature types as make sense
+    items = []
+    batch_text = []
+    indices = []
+
+    if args.use_gpu:
+        fluency_model.to("cuda")
+        bert_model.to("cuda")
+
+    with gzip.open(args.subdocuments, "rt") as ifd:
+        docs = json.loads(ifd.read())
+        logger.info("Loaded %d docs from '%s'", len(docs), args.subdocuments)
+
+
+        for doc_index, subdocument in enumerate(docs):
+            
+            uid = subdocument["id"]
+            text = subdocument["text"]
+            # language = subdocument["provenance"]["language"]
+            item = {
+                "id" : uid,
+                "text" : text,
+                "feature_sets" : {
+                },
+                "provenance" : subdocument["provenance"]
+            }
+
+            batch_text.append(text)
+            indices.append(doc_index)
+            items.append(item)
+            #### Neural Features ####
+            fluency_scores = {}
+            sentence_embs = {}
+            #continue
+            # this should work if batch_size >= 1
+            if (doc_index+1) % args.batch_size == 0:
+                #if not args.limited_memory:
+                # TODO
+                fluency_scores = {i : f for i,f in list(zip(indices, fluency_score(batch_text, fluency_model, fluency_tokenizer, args.use_gpu)))}
+                
                 # old way
                 # item["feature_sets"]["fluency"] = {"values": fluency_score(batch_text, fluency_model,fluency_tokenizer)}
-        
-            sentence_embs = {i : s for i,s in list(zip(indices, get_bert_emb(batch_text, bert_model, bert_tokenizer)))}
-            # old way
-            # item["feature_sets"]["sentence_embedding"] = {"values" : get_bert_emb(batch_text, bert_model, bert_tokenizer)}
+
+                sentence_embs = {i : s for i,s in list(zip(indices, get_bert_emb(batch_text, bert_model, bert_tokenizer, args.use_gpu)))}
+                # old way
+                # item["feature_sets"]["sentence_embedding"] = {"values" : get_bert_emb(batch_text, bert_model, bert_tokenizer)}
+
+                # clear 
+                indices = []
+                batch_text = []
+            # the last batch, which may be ragged
+            elif doc_index+1 == len(docs):
+                # sanity check, there should be however many left over here
+                assert len(indices) == len(docs) % args.batch_size
+                fluency_scores = {i : f for i,f in list(zip(indices, fluency_score(batch_text, fluency_model, fluency_tokenizer, args.use_gpu)))}
+                sentence_embs = {i : s for i,s in list(zip(indices, get_bert_emb(batch_text, bert_model, bert_tokenizer, args.use_gpu)))}
+            else:
+                pass
+
+            #### Stylometric Features ####
+            # Subdocument (list of strings) features
+            item["feature_sets"]["readability"] = {"values": readability_features(text)}
+
+            # Run SpaCy on the subdocument
+            spacy_doc = nlp(text)
             
-            # clear 
-            indices = []
-            batch_text = []
-        # the last batch, which may be ragged
-        elif i+1 == len(docs):
-            # sanity check, there should be however many left over here
-            assert len(indices) == len(docs) % args.batch_size
-            if not args.limited_memory:
-                fluency_scores = {i : f for i,f in list(zip(indices, fluency_score(batch_text, fluency_model, fluency_tokenizer)))}
-            sentence_embs = {i : s for i,s in list(zip(indices, get_bert_emb(batch_text, bert_model, bert_tokenizer)))}
-        else:
-            pass
+            # Get different versions of spacy_doc
+            str_spacy_doc = str(spacy_doc)
+            tokens = [token.text.lower() for token in spacy_doc]
+            counter = Counter(tokens) 
+            word_dict = {}
+            for token in spacy_doc:  
+                word_dict.setdefault(token.text, 0)
+                word_dict[token.text] += 1  
 
-        #### Stylometric Features ####
-        # Subdocument (list of strings) features
-        item["feature_sets"]["readability"] = {"values": readability_features(text)}
+            # Extract features
+            sent_props, num_sents = sentence_props(spacy_doc)
+            item['feature_sets']["sentence properties"] = {"values" : sent_props}
+            item['feature_sets']["# sentences"]= {"values" : num_sents}
 
-        # Run SpaCy on the subdocument
-        spacy_doc = nlp(text)
+            comparison_list, function_list = checking_lists(str_spacy_doc, word_dict)
+            item['feature_sets']["comparisons"] = {"values" : comparison_list}
+            item['feature_sets']["function words"] = {"values" : function_list}
 
-        # Get different versions of spacy_doc
-        str_spacy_doc = str(spacy_doc)
-        tokens = [token.text.lower() for token in spacy_doc]
-        counter = Counter(tokens) 
-        word_dict = {}
-        for token in spacy_doc:  
-            word_dict.setdefault(token.text, 0)
-            word_dict[token.text] += 1  
+            item["feature_sets"]["special chars"] = {"values" : character_freqs(str_spacy_doc)} 
 
-        # Extract features
-        sent_props, num_sents = sentence_props(spacy_doc)
-        item['feature_sets']["sentence properties"] = {"values" : sent_props}
-        item['feature_sets']["# sentences"]= {"values" : num_sents}
+            item["feature_sets"]["punctuation"] = {"values" : punctuation_freqs(tokens)} 
 
-        comparison_list, function_list = checking_lists(str_spacy_doc, word_dict)
-        item['feature_sets']["comparisons"] = {"values" : comparison_list}
-        item['feature_sets']["function words"] = {"values" : function_list}
+            pos_dict, word_prop_dict = postag_freqs(spacy_doc)
+            item["feature_sets"]["POS"] = {"values" : pos_dict}
 
-        item["feature_sets"]["special chars"] = {"values" : character_freqs(str_spacy_doc)} 
-        
-        item["feature_sets"]["punctuation"] = {"values" : punctuation_freqs(tokens)} 
-        
-        pos_dict, word_prop_dict = postag_freqs(spacy_doc)
-        item["feature_sets"]["POS"] = {"values" : pos_dict}
-        
-        num_tokens = len(tokens)
-        word_prop_dict["# tokens in doc"] = num_tokens #tokens not words b/c includes punct
-        num_unique_tokens = len(word_dict)
-        word_prop_dict["# unique tokens"] = num_unique_tokens #also includes punct
-        item["feature_sets"]["word properties"] = {"values" : word_prop_dict}
+            num_tokens = len(tokens)
+            word_prop_dict["# tokens in doc"] = num_tokens #tokens not words b/c includes punct
+            num_unique_tokens = len(word_dict)
+            word_prop_dict["# unique tokens"] = num_unique_tokens #also includes punct
+            item["feature_sets"]["word properties"] = {"values" : word_prop_dict}
 
-        # NOTE: this never seems to return tokens, the text examples are too short
-        # but keep it in for other use cases
-        item["feature_sets"]["most freq tokens"] = most_freq_tokens(counter, 3, 30) #min_count, #num_top_tokens
+            # NOTE: this never seems to return tokens, the text examples are too short
+            # but keep it in for other use cases
+            item["feature_sets"]["most freq tokens"] = most_freq_tokens(counter, 3, 30) #min_count, #num_top_tokens
 
-        ## Include the below if using the function frequency_based_list (needs to be updated)
-        # for word in subdocument:
-        #     word = word.lower() if args.lowercase else word
-            
-        #     item["representation"][word] = item["representation"].get(word, 0) + 1
-        # item["representation"] = {k : v / len(subdocument) for k, v in item["representation"].items() if v >= args.minimum_count and k in word_list}
-        
-        items.append(item)
+            ## Include the below if using the function frequency_based_list (needs to be updated)
+            # for word in subdocument:
+            #     word = word.lower() if args.lowercase else word
 
-        # update the appropriate indices with the neural features
-        if len(fluency_scores.items()) > 0:
-            for k,v in fluency_scores.items(): 
-                items[k]["feature_sets"]["fluency"] = {"values" : v}
-        if len(sentence_embs.items()) > 0:
-            for k,v in sentence_embs.items(): 
-                items[k]["feature_sets"]["sentence_embedding"] = {"values" : v}
-    
-with gzip.open(args.representations, "wt") as ofd:
-    ofd.write(json.dumps(items, indent=4))
+            #     item["representation"][word] = item["representation"].get(word, 0) + 1
+            # item["representation"] = {k : v / len(subdocument) for k, v in item["representation"].items() if v >= args.minimum_count and k in word_list}
 
+            items.append(item)
+
+            # update the appropriate indices with the neural features
+            if len(fluency_scores.items()) > 0:
+                for k,v in fluency_scores.items(): 
+                    items[k]["feature_sets"]["fluency"] = {"values" : v}
+            if len(sentence_embs.items()) > 0:
+                for k,v in sentence_embs.items(): 
+                    items[k]["feature_sets"]["sentence_embedding"] = {"values" : v}
+            if (doc_index+1) % args.batch_size == 0:
+                logger.info("Processed %d", doc_index)
+            continue        
+    with gzip.open(args.representations, "wt") as ofd:
+        ofd.write(json.dumps(items, indent=4))
+        logger.info("Wrote output to '%s'", args.representations)
 
 
 
