@@ -1,11 +1,16 @@
 import gzip
 import logging
 import json
+from typing import Dict
 import numpy as np
 import textstat
+
 from collections import Counter
 from numpy import array, average
 import spacy
+from nltk.tokenize import sent_tokenize
+
+from itertools import groupby
 from tqdm import tqdm
 import transformers
 import torch
@@ -19,11 +24,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger()
 
-# TODO: add BERT support, depending on language flag, and fluency score
-
-
 # Load SpaCy English tokenizer, tagger, parser and NER
-
 
 ## Currently not being used; uses nltk
 def frequency_based_list(fnames, lowercase, number_of_words):
@@ -71,7 +72,7 @@ def frequency_based_list(fnames, lowercase, number_of_words):
 # word_list = stopwords.words("english") if args.feature_selection_method == "stopwords" else frequency_based_list(args.subdocuments, args.lowercase, args.num_features_to_keep)
 ### --- NEURAL FEATURES --- ###
 def fluency_score(texts,model,tokenizer, use_gpu):
-    logger.info("Starting batch...")
+    # logger.info("Starting batch...")
     inputs = tokenizer(texts, return_tensors="pt", padding=True, truncation=True)
     if use_gpu:
         inputs.to("cuda")
@@ -121,8 +122,7 @@ def get_bert_emb(texts, model, tokenizer, use_gpu):
         token_embeddings = model_output[0] #First element of model_output contains all token embeddings
         input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
         return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
-    # this is language specific, well, the hebrew will already be Hebrew
-  
+
     # NOTE: we treat each subdocument as a sentence (they're short enough that it's okay)
     encoded_input = tokenizer(texts, padding=True, truncation=True, return_tensors='pt')
     if use_gpu:
@@ -295,7 +295,116 @@ def most_freq_tokens(counter, min_count, num_top_tokens):
     most_freq_dict = {k : v for k, v in most_freq if v >= min_count}
     return most_freq_dict
 
-####
+
+def aggregate_features(docs: list) -> list:
+    """counts just get summed, embeddings are averaged, probabilities weighted by document-length."""
+
+    items = []
+
+    for id, dicts in groupby(docs, key=lambda i:i['id']):
+        dicts = list(dicts)
+        # TODO: the text joins back up with no space in btw
+        item = {
+                "id" : id,
+                "provenance" : dicts[0]["provenance"],
+                "text" : ''.join([d['text'] for d in dicts]),
+                "feature_sets" : {
+                    "function words" : {
+                        "values" : Counter()
+                    },
+                    "most freq tokens" : {
+                        "values" : Counter()
+                    },
+                    "sentence properties" : {
+                        "values" : Counter()
+                    },
+                    "# sentences" : {
+                        "values" : 0
+                    },
+                    "comparisons" : {
+                        "values" : Counter()
+                    },
+                    "special chars" : { 
+                        "values" : Counter()
+                    },
+                    "punctuation" : {  
+                        "values" : Counter()
+                    }, 
+                    "POS" : {
+                        "values" : Counter()
+                    },
+                    "word properties" : {
+                        "values" : Counter()
+                    }
+                }
+            }
+
+        # average fluency probs weighted by doc length
+        item["feature_sets"]["fluency"] = {"values" : np.sum([d['feature_sets']['fluency']['values']
+                                                      *len(d['text'])/len(item['text']) for d in dicts])}
+
+        # HACK: asuming we can average all of these as weighted by doc length, but the difficult words needs to be summed
+        item["feature_sets"]["readability"]= {"values": {"Difficult words" : 0}}
+        item["feature_sets"]["readability"]["values"]["Flesch reading ease"] = np.mean([d['feature_sets']['readability']['values']['Flesch reading ease'] for d in dicts])
+        item["feature_sets"]["readability"]["values"]["Smog index"] = np.mean([d['feature_sets']['readability']['values']['Smog index'] for d in dicts])
+        item["feature_sets"]["readability"]["values"]["Flesch-Kincaid grade"] = np.mean([d['feature_sets']['readability']['values']['Flesch-Kincaid grade'] for d in dicts])
+        item["feature_sets"]["readability"]["values"]["Coleman-Liau index"] = np.mean([d['feature_sets']['readability']['values']['Coleman-Liau index'] for d in dicts])
+        item["feature_sets"]["readability"]["values"]["Automated readability index"] = np.mean([d['feature_sets']['readability']['values']['Automated readability index'] for d in dicts])
+        item["feature_sets"]["readability"]["values"]["Dale-Chall readability score"] = np.mean([d['feature_sets']['readability']['values']['Dale-Chall readability score'] for d in dicts])
+        item["feature_sets"]["readability"]["values"]["Linsear write formula"] = np.mean([d['feature_sets']['readability']['values']['Linsear write formula'] for d in dicts])
+        item["feature_sets"]["readability"]["values"]["Gunning Fog index"] = np.mean([d['feature_sets']['readability']['values']['Gunning Fog index'] for d in dicts])
+  
+
+        embeds = []
+        
+        # aggregate the counts
+        for d in dicts:
+            item["feature_sets"]["function words"]["values"] += Counter(d['feature_sets']['function words']['values']) 
+            item["feature_sets"]["most freq tokens"]["values"] += Counter(d['feature_sets']['most freq tokens']["values"])
+            item['feature_sets']["sentence properties"]["values"] += Counter(d['feature_sets']['sentence properties']['values'])
+            item['feature_sets']["# sentences"]["values"] += d['feature_sets']['# sentences']["values"]
+            item['feature_sets']["comparisons"]["values"] += Counter(d['feature_sets']['comparisons']['values'])
+            item["feature_sets"]["special chars"]["values"] += Counter(d['feature_sets']['special chars']['values'])
+            item["feature_sets"]["punctuation"]["values"] += Counter(d['feature_sets']['punctuation']['values'])
+            item["feature_sets"]["POS"]["values"] += Counter(d['feature_sets']['POS']['values'])
+            item["feature_sets"]["word properties"]["values"] += Counter(d['feature_sets']['word properties']['values'])
+            item["feature_sets"]["readability"]["values"]["Difficult words"] += int(d['feature_sets']['readability']['values']["Difficult words"])
+            
+            embeds.append([v for v in d['feature_sets']['sentence_embedding']['values'].values()])
+        
+        # average the BERT embeddings
+        embeds = np.array(embeds)
+        avg = np.mean(embeds, axis=0) # 768
+        avg = list(avg)
+        sentence_embed_titles = dicts[0]['feature_sets']['sentence_embedding']['values'].keys()
+        item["feature_sets"]["sentence_embedding"]= {"values": {k:v for k,v in zip(sentence_embed_titles, avg)}}
+            
+
+        items.append(item)
+    return items
+
+def split_long_docs(items: list, threshold: int) -> list:
+    subdocs = []
+    for item in items:
+        sents = sent_tokenize(item['text'])
+        if len(sents) > threshold:
+            while len(sents) > threshold:
+                # print(f'{len(sents)} > {threshold}')
+                tmp = item.copy()
+                tmp['text'] = ' '.join(sents[:threshold])
+                subdocs.append(tmp)
+                sents = sents[threshold:]
+            if len(sents) > 0:
+
+                tmp = item.copy()
+                tmp['text'] = ' '.join(sents)
+                subdocs.append(tmp)
+
+        else:
+
+            subdocs.append(item.copy())
+    return subdocs
+
 if __name__ == "__main__":
 
     import argparse
@@ -307,6 +416,7 @@ if __name__ == "__main__":
     parser.add_argument("--language", dest="language", )
     parser.add_argument("--use_gpu", dest="use_gpu", default=False, action="store_true")
     parser.add_argument("--batch_size", dest="batch_size", default=1, type=int)
+    parser.add_argument('--threshold', dest="threshold", default=10, type=int)
     args = parser.parse_args()
     
     logger.setLevel(logging.INFO)
@@ -327,7 +437,6 @@ if __name__ == "__main__":
     logger.info("Loaded bert model")
 
     # Extract all features
-    # TODO: add a check for language and extract only such feature types as make sense
     items = []
     batch_text = []
     indices = []
@@ -340,12 +449,13 @@ if __name__ == "__main__":
         docs = json.loads(ifd.read())
         logger.info("Loaded %d docs from '%s'", len(docs), args.subdocuments)
 
+        docs = split_long_docs(docs, threshold=args.threshold)
 
         for doc_index, subdocument in enumerate(docs):
             
             uid = subdocument["id"]
             text = subdocument["text"]
-            # language = subdocument["provenance"]["language"]
+        
             item = {
                 "id" : uid,
                 "text" : text,
@@ -360,7 +470,7 @@ if __name__ == "__main__":
             #### Neural Features ####
             fluency_scores = {}
             sentence_embs = {}
-            #continue
+        
             # this should work if batch_size >= 1
             if (doc_index+1) % args.batch_size == 0:
                 #if not args.limited_memory:
@@ -426,7 +536,7 @@ if __name__ == "__main__":
 
             # NOTE: this never seems to return tokens, the text examples are too short
             # but keep it in for other use cases
-            item["feature_sets"]["most freq tokens"] = most_freq_tokens(counter, 3, 30) #min_count, #num_top_tokens
+            item["feature_sets"]["most freq tokens"] = {"values": most_freq_tokens(counter, 3, 30)} #min_count, #num_top_tokens
 
             ## Include the below if using the function frequency_based_list (needs to be updated)
             # for word in subdocument:
@@ -435,7 +545,6 @@ if __name__ == "__main__":
             #     item["representation"][word] = item["representation"].get(word, 0) + 1
             # item["representation"] = {k : v / len(subdocument) for k, v in item["representation"].items() if v >= args.minimum_count and k in word_list}
 
-            items.append(item)
 
             # update the appropriate indices with the neural features
             if len(fluency_scores.items()) > 0:
@@ -447,7 +556,11 @@ if __name__ == "__main__":
             if (doc_index+1) % args.batch_size == 0:
                 logger.info("Processed %d", doc_index)
             continue        
-    with gzip.open(args.representations, "wt") as ofd:
+        
+        # recombine the features from split documents
+        items = aggregate_features(items)
+
+    with open(args.representations, "wt") as ofd:
         ofd.write(json.dumps(items, indent=4))
         logger.info("Wrote output to '%s'", args.representations)
 
