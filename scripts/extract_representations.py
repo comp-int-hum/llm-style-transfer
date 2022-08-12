@@ -72,7 +72,7 @@ def frequency_based_list(fnames, lowercase, number_of_words):
 # word_list = stopwords.words("english") if args.feature_selection_method == "stopwords" else frequency_based_list(args.subdocuments, args.lowercase, args.num_features_to_keep)
 ### --- NEURAL FEATURES --- ###
 def fluency_score(texts,model,tokenizer, use_gpu):
-    # logger.info("Starting batch...")
+    logger.info("Starting batch...")
     inputs = tokenizer(texts, return_tensors="pt", padding=True, truncation=True)
     if use_gpu:
         inputs.to("cuda")
@@ -389,19 +389,16 @@ def split_long_docs(items: list, threshold: int) -> list:
         sents = sent_tokenize(item['text'])
         if len(sents) > threshold:
             while len(sents) > threshold:
-                # print(f'{len(sents)} > {threshold}')
                 tmp = item.copy()
                 tmp['text'] = ' '.join(sents[:threshold])
                 subdocs.append(tmp)
                 sents = sents[threshold:]
             if len(sents) > 0:
-
                 tmp = item.copy()
                 tmp['text'] = ' '.join(sents)
                 subdocs.append(tmp)
 
         else:
-
             subdocs.append(item.copy())
     return subdocs
 
@@ -560,7 +557,7 @@ if __name__ == "__main__":
         # recombine the features from split documents
         items = aggregate_features(items)
 
-    with open(args.representations, "wt") as ofd:
+    with gzip.open(args.representations, "wt") as ofd:
         ofd.write(json.dumps(items, indent=4))
         logger.info("Wrote output to '%s'", args.representations)
 
