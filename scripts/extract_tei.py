@@ -1,4 +1,7 @@
 import argparse
+from collections import Counter
+import collections
+from typing import Dict
 import xml.etree.ElementTree as etree
 import gzip
 import json
@@ -7,66 +10,145 @@ import os
 import tarfile
 from nltk.tokenize import word_tokenize, sent_tokenize
 from tqdm import tqdm
+import logging
+from itertools import groupby
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--primary_sources", dest="primary_sources", default="data/tirant_lo_blanc.txt")
-parser.add_argument("--documents", dest="documents")
-parser.add_argument("--language", dest="language", default="catalan")
-parser.add_argument("--aggregation_method", dest="aggregation_method", choices=['line', 'verse', 'chapter', 'book'], 
-                    help="What level of granularity to group the text spans", default='chapter')
+logging.basicConfig(
+    format="%(asctime)s %(message)s",
+    datefmt="%H:%M:%S %d-%m-%Y"
+)
+logger = logging.getLogger()
 
-args = parser.parse_args()
-
-
-
-PREFIX = ''.join(args.primary_sources.split('.')[:-1]).split('/')[-1]
-
-ID_COUNTER=0
-
-def parse_xml(xml):
-    result = []
-    provenance = {}
+def aggregate(items: list[Dict], method: str)-> list[Dict]:
+    """Takes in a list of items and aggregates them based on the specified method."""
     
-    # root = xml.getroot()
-    # HACK: grab book title
-    title = xml.findall(".//{*}titleStmt/{*}title")[-1].text
-    if title.endswith(".DH"):
-        provenance["DH"] = True
-        title = title[:-3]
-    provenance["title"] = title
-    # lang = xml.find(".//{*}language").attrib['ident'].lower()
-    # provenance["language"] = lang
-    for chapter in xml.findall(".//{*}c"):
-        for i, verse in enumerate(chapter):
-            item = {
-                "text" : [], 
-                "provenance": provenance, 
-                "id": f'{PREFIX}_{ID_COUNTER}'}
-            item["provenance"]["source"] = verse.attrib.get('s')
-            item["provenance"]["chapter"] = chapter.attrib.get('n')
-            item["provenance"]["verse"] = verse.attrib.get('n')
+    result = []
+    if method == "line" or method == "verse":
+        return items
+    elif method == "chapter":
+        for book, b_dicts in groupby(items, key=lambda i:i['provenance']['book']):
+            # each b_dist is a list of dictionaries, one per verse for the whole book
+            b_dicts = list(b_dicts)
+            for chapter, c_dicts in groupby(b_dicts, key=lambda i:i['provenance']['chapter']):
+            
+                c_dicts = list(c_dicts)
+                # NOTE: could be more careful with the IDs, but they'll still be unique so who cares
+                # what do we do about the sources? just yeet them for now
 
-            # NOTE: this catches the <vs> tags that don't have text
-            if item["provenance"]["verse"] != None:
-            # if None not in [item["provenance"]["chapter"], item["provenance"]["verse"]]:
-                ID_COUNTER += 1
-                # TODO: check for ellipses 
-                # HACK: for whatever reason, it flips the text? I manually reverse it again
-                # line = [x[::-1].strip() for x in verse.itertext()]
-                line = [x.strip() for x in verse.itertext()]
+                item = c_dicts[0].copy()
+                del item['provenance']['verse']
+                try:
+                    del item['provenance']['s']
+                except KeyError:
+                    pass
+                text = ' '.join([d['text'] for d in c_dicts])
+                item['text'] = text
+                #HACK
+                item = {k : ({sk : sv for sk, sv in v.items()} if isinstance(v, dict) else v) for k, v in item.items()}
 
-                # remove the empty entries
-                while("" in line):
-                    line.remove("")
-                
-                line = " ".join(line)
-                line = line.replace('\n','')
-                item["text"] = line
-                
                 result.append(item)
+    # here we're going to groupby the book and chapter and then aggregate the verses
+    elif method == "book":
+        # here we're going to groupby the book and then aggregate the chapters
+        for book, dicts in groupby(items, key=lambda i:i['provenance']['book']):
+            # each b_dist is a list of dictionaries, one per verse for the whole book
+            dicts = list(dicts)
+            item = dicts[0].copy()
+            del item['provenance']['verse']
+            del item['provenance']['chapter']
+            try:
+                del item['provenance']['s']
+            except KeyError:
+                pass
+            text = ' '.join([d['text'] for d in dicts])
+            item['text'] = text
+            
+            #HACK 
+            item = {k : ({sk : sv for sk, sv in v.items()} if isinstance(v, dict) else v) for k, v in item.items()}
+            result.append(item)
+    else:
+        raise ValueError(f"{method} is not a valid aggregation method")
+
     return result
 
+def parse_xml(xml):
+    
+    PREFIX = ''.join(args.primary_sources.split('.')[:-1]).split('/')[-1]
+    ID_COUNTER=0
+    
+    result = []
+    provenance = {}
+    # TODO: have a list of these that is accessible to user
+    # this is useful for generalization. 
+    doc_specific = {"EOL": ':',
+                    "verse_tag" : None,
+                    "chapter_tag": None,
+                    "verse_tag": None,
+                    "to_ignore": None}
+    
+
+    # HACK: grab book title
+    title = xml.findall(".//{*}titleStmt/{*}title")[-1].text
+
+    # adding dataset metadata
+    if title.endswith(".DH"):
+        provenance["subset"] = "DH"
+        title = title[:-3]
+    if title in ['Isaiah', 'Psalms']:
+        provenance["subset"] = title
+
+    provenance["book"] = title
+    # lang = xml.find(".//{*}language").attrib['ident'].lower()
+    provenance["language"] = args.language
+
+    for chapter in xml.findall(".//{*}c"):
+        for i, child in enumerate(chapter):
+            item = {
+                "text" : [], 
+                "id": f'{PREFIX}_{ID_COUNTER}',
+                "provenance": provenance
+            }
+            if child.tag not in ['v', 'vs']:
+                item["provenance"][child.tag] = child.text
+            item["provenance"].update(chapter.attrib)
+            item["provenance"]['chapter'] = item["provenance"]['n']
+        
+            item["provenance"].update(child.attrib)
+            item["provenance"]['verse'] = item["provenance"]['n']
+            
+            del item["provenance"]['n']
+    
+            ID_COUNTER += 1
+            
+
+            # HACK: for whatever reason, it flips the text? I manually reverse it again
+            # TODO: check which way around this is meant to be, could be a viewing error
+            # line = [x[::-1].strip() for x in verse.itertext()]
+            line = [x.strip() for x in child.itertext()]
+    
+            # remove the empty entries
+            while("" in line):
+                line.remove("")
+            
+            # remove the ellipses
+            while("." in line):
+                line.remove(".")
+
+            line = " ".join(line)
+            line = line.replace('\n','')
+            item["text"] = line
+
+            # HACK: for some reason, this is necessary
+            item = {k : ({sk : sv for sk, sv in v.items()} if isinstance(v, dict) else v) for k, v in item.items()}
+            result.append(item)
+
+    return result
+
+# TODO: not working yet, need to fix this
 def parse_txt(text):
+
+    PREFIX = ''.join(args.primary_sources.split('.')[:-1]).split('/')[-1]
+    ID_COUNTER=0
     # TODO: generalize, take in different delimiters
     if "tirant_lo_blanc" in PREFIX:
         if args.aggregation_method == "line":
@@ -119,58 +201,53 @@ def parse_txt(text):
     result = []
     return result
 
-print(PREFIX)
-results = []
-if args.primary_sources.endswith("tgz"):
-    tf = tarfile.open(args.primary_sources, "r:gz")
-    for fname in tf.getnames():
-        if fname.endswith(("tei", "xml")):
-            with tf.extract_file(fname) as ifd:
-                xml = etree.parse(fname)
-            results.extend(parse_xml(xml))
-elif args.primary_sources.endswith("json.gz"):               
-    with gzip.open(args.primary_sources, "rt") as ifd:
-        results.extend(json.loads(ifd.read()))
-elif args.primary_sources.endswith(".txt"):
-    with open(args.primary_sources, "rt") as ifd:
-        text = ifd.read()
-    results.extend(parse_txt(text))
-else:
-    raise Exception("The input document '{}' does not appear to be in a recognized format (either the extension is unknown, or you need to add handling logic for it to 'scripts/divide_documents.py')".format(args.primary_sources))
+if __name__ == "__main__":
 
-print(results)
-# for fname in documents:
-#     # print(f"****** \n Processing text in {fname} \n ******")
-#     provenance = {}
-#     try:
-#         with tf.extractfile(fname) as ifd:
-#             xml = etree.parse(ifd)
-#     except:
-#         with open(fname) as ifd:
-#             xml = etree.parse(ifd)
-#     print(xml)
-#     
-#                 # NOTE: here the 'verse' and 'source' fields are correct
-#             # NOTE: here they're not
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--primary_sources", dest="primary_sources", default="data/tirant_lo_blanc.txt")
+    parser.add_argument("--documents", dest="documents")
+    parser.add_argument("--language", dest="language", default="catalan")
+    parser.add_argument("--aggregation_method", dest="aggregation_method", choices=['line', 'verse', 'chapter', 'book'], 
+                        help="What level of granularity to group the text spans", default='chapter')
+
+    args = parser.parse_args()
+
+    logger.setLevel(logging.INFO)
+ 
+    results = []
+    if args.primary_sources.endswith("tgz"):
+        tf = tarfile.open(args.primary_sources, "r:gz")
+        for fname in tf.getnames()[0:4]:
+            if fname.endswith(("tei", "xml")):
+                logger.info('Parsing {}'.format(fname))
+                xml = etree.parse(tf.extractfile(fname))
+                results.extend(parse_xml(xml))
+
+    # elif args.primary_sources.endswith("json.gz"):               
+    #     with gzip.open(args.primary_sources, "rt") as ifd:
+    #         results.extend(json.loads(ifd.read()))
+    # elif args.primary_sources.endswith(".txt"):
+    #     with open(args.primary_sources, "rt") as ifd:
+    #         text = ifd.read()
+    #     results.extend(parse_txt(text))
+    else:
+        raise Exception("The input document '{}' does not appear to be in a recognized format (either the extension is unknown, or you need to add handling logic for it to 'scripts/divide_documents.py')".format(args.primary_sources))
 
 
-# for i in range(len(results)):
-#     # maybe check formatting here, too?
-#     results[i]["provenance"]["language"] = args.language
+    # aggregating
+    agg_results = aggregate(results, args.aggregation_method)
+    
+    
+    # #### saving the result to disk ####
 
-# # print('*****\n\n\n')
+    json_str = json.dumps(results, indent=4) 
 
-# #### saving the result to disk ####
+    with open(f'{args.documents}', "wt") as ofd:
+        ofd.write(json_str)
 
-# json_str = json.dumps(results, indent=4) 
+    json_str = json.dumps(agg_results, indent=4) 
 
-# with open(f'{args.documents}', "wt") as ofd:
-#     ofd.write(json_str)
-
-# json_bytes = json_str.encode('utf-8')           
-
-# with gzip.open(f'{args.experiment_name}.json.gz', 'w') as ofd:       # 4. fewer bytes (i.e. gzip)
-#     ofd.write(json_bytes) 
-
-
+    with open(f'{args.documents}_{args.aggregation_method}', "wt") as ofd:
+        ofd.write(json_str)
+    
 
