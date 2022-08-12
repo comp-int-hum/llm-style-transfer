@@ -1,3 +1,4 @@
+import re
 import gzip
 import logging
 import json
@@ -390,7 +391,7 @@ def split_long_docs(items: list, threshold: int) -> list:
         if len(sents) > threshold:
             while len(sents) > threshold:
                 tmp = item.copy()
-                tmp['text'] = ' '.join(sents[:threshold])
+                tmp['text'] = re.sub(r"(\[[^\]]+\])\((\S{1,30}).*?\)", "\1(\2)", ' '.join(sents[:threshold]))
                 subdocs.append(tmp)
                 sents = sents[threshold:]
             if len(sents) > 0:
