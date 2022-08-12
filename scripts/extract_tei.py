@@ -120,7 +120,6 @@ def parse_xml(xml):
     
             ID_COUNTER += 1
             
-
             # HACK: for whatever reason, it flips the text? I manually reverse it again
             # TODO: check which way around this is meant to be, could be a viewing error
             # line = [x[::-1].strip() for x in verse.itertext()]
@@ -141,7 +140,15 @@ def parse_xml(xml):
             # HACK: for some reason, this is necessary
             item = {k : ({sk : sv for sk, sv in v.items()} if isinstance(v, dict) else v) for k, v in item.items()}
             result.append(item)
+    # slightly different processing
+    if title == 'Psalms':
+        result = psalm_superscription_parse(result)
+    return result
 
+
+def psalm_superscription_parse(items: list[Dict]) -> list[Dict]:
+    superscription_ids = []
+    result = items
     return result
 
 # TODO: not working yet, need to fix this
@@ -234,20 +241,20 @@ if __name__ == "__main__":
         raise Exception("The input document '{}' does not appear to be in a recognized format (either the extension is unknown, or you need to add handling logic for it to 'scripts/divide_documents.py')".format(args.primary_sources))
 
 
+    
     # aggregating
-    agg_results = aggregate(results, args.aggregation_method)
+    results = aggregate(results, args.aggregation_method)
     
     
-    # #### saving the result to disk ####
+    ##### saving the result to disk ####
 
-    json_str = json.dumps(results, indent=4) 
+    with gzip.open(f'{args.documents}', "wt") as ofd:
+        ofd.write(json.dumps(results, indent=4))
+        logger.info("Wrote output to '%s'", args.representations)
 
-    with open(f'{args.documents}', "wt") as ofd:
-        ofd.write(json_str)
+    # json_str = json.dumps(agg_results, indent=4) 
 
-    json_str = json.dumps(agg_results, indent=4) 
-
-    with open(f'{args.documents}_{args.aggregation_method}', "wt") as ofd:
-        ofd.write(json_str)
+    # with open(f'{args.documents}_{args.aggregation_method}', "wt") as ofd:
+    #     ofd.write(json_str)
     
 
